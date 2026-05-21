@@ -9,7 +9,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
+from quantcheck.config import load_env
 from quantcheck.gmail_api_notify import parse_recipients, send_email as deliver_email
+from quantcheck.state import atomic_write_json
 
 ROOT = Path(os.environ.get('QUANTCHECK_HOME', Path(__file__).resolve().parents[1]))
 STATE = ROOT / 'state'
@@ -44,7 +46,7 @@ def load_json(path: Path) -> dict:
 
 
 def save_json(path: Path, data: dict):
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    atomic_write_json(path, data)
 
 
 def parse_dt(s: str | None):
@@ -71,14 +73,7 @@ def expected_windows_passed(dt_ny: datetime):
 
 
 def send_email(subject: str, body: str):
-    env = {}
-    env_path = ROOT / '.env'
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            if '=' in line and not line.strip().startswith('#'):
-                k, v = line.split('=', 1)
-                env[k.strip()] = v.strip()
-                os.environ.setdefault(k.strip(), v.strip())
+    env = load_env(ROOT)
     recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'))
     if not recipients:
         log(f'email skipped: NOTIFY_EMAIL_TO is not configured for {subject}')

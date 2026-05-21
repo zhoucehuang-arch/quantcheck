@@ -7,7 +7,9 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quantcheck.config import load_env
 from quantcheck.gmail_api_notify import parse_recipients, send_email as deliver_email
+from quantcheck.state import atomic_write_json
 
 ROOT = Path(os.environ.get('QUANTCHECK_HOME', Path(__file__).resolve().parents[1]))
 STATE = ROOT / 'state'
@@ -115,14 +117,7 @@ def diff(old, new):
 
 
 def send_email(subject, body):
-    env = {}
-    ep = ROOT / '.env'
-    if ep.exists():
-        for line in ep.read_text().splitlines():
-            if '=' in line and not line.strip().startswith('#'):
-                k, v = line.split('=', 1)
-                env[k.strip()] = v.strip()
-                os.environ.setdefault(k.strip(), v.strip())
+    env = load_env(ROOT)
     recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'))
     if not recipients:
         return
@@ -150,7 +145,7 @@ def main():
     ])
     if screenshot:
         body += f'\nMEDIA:{screenshot}'
-    LAST_NOTE.write_text(json.dumps({'subject':'Quant GT Website Update Detected','body':body,'at':datetime.now(timezone.utc).isoformat(),'changes':changes}, ensure_ascii=False, indent=2), encoding='utf-8')
+    atomic_write_json(LAST_NOTE, {'subject':'Quant GT Website Update Detected','body':body,'at':datetime.now(timezone.utc).isoformat(),'changes':changes})
     send_email('Quant GT Website Update Detected', body)
     print('Quant GT Website Update Detected')
     print(body)

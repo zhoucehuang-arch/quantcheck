@@ -3,14 +3,27 @@ from __future__ import annotations
 import base64
 import mimetypes
 import os
-import re
 import smtplib
 import ssl
+import traceback
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable, List
 
 ROOT = Path(os.environ.get("QUANTCHECK_HOME", Path(__file__).resolve().parents[1]))
+LOG_FILE = ROOT / "logs" / "quantcheck_email.log"
+
+
+def _log_failure(context: str, exc: Exception | str) -> None:
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        detail = str(exc)
+        if isinstance(exc, Exception):
+            detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+        with LOG_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(f"{context}: {detail}\n")
+    except Exception:
+        pass
 
 
 def parse_recipients(value: str | Iterable[str] | None, default: str | None = None) -> List[str]:
@@ -80,7 +93,8 @@ def send_via_smtp(subject: str, body: str, to: str | Iterable[str] | None = None
                     s.login(username, password)
                 s.send_message(msg)
         return True
-    except Exception:
+    except Exception as exc:
+        _log_failure("smtp send failed", exc)
         return False
 
 
@@ -89,7 +103,6 @@ def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None =
 
     Required env/config:
       GMAIL_API_ENABLED=1
-      GMAIL_API_CLIENT_SECRET=/path/client_secret.json
       GMAIL_API_TOKEN=/path/token.json
       GMAIL_API_FROM=sender@example.com
     """
@@ -108,9 +121,6 @@ def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None =
         return False
     scopes = [
         "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/gmail.modify",
-        "https://www.googleapis.com/auth/gmail.compose",
     ]
     try:
         creds = Credentials.from_authorized_user_file(str(token_path), scopes)
@@ -124,7 +134,8 @@ def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None =
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
         svc.users().messages().send(userId="me", body={"raw": raw}).execute()
         return True
-    except Exception:
+    except Exception as exc:
+        _log_failure("gmail api send failed", exc)
         return False
 
 

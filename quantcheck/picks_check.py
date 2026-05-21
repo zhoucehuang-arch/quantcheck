@@ -17,20 +17,23 @@ import json
 import os
 import random
 import re
-import subprocess
 import time
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # Reuse the existing fetch/export implementation so Excel formatting stays in one place.
+from quantcheck.config import load_env as load_dotenv
+from quantcheck.diff import compare
 from quantcheck import picks_report as report
 from quantcheck.gmail_api_notify import parse_recipients, send_email as deliver_email
+from quantcheck.state import atomic_write_json, prune_old_files as prune_files
+from quantcheck.validation import validate_member_picks_data
 
 ROOT = Path(os.environ.get('QUANTCHECK_HOME', Path(__file__).resolve().parents[1]))
 STATE = ROOT / 'state'
@@ -38,7 +41,6 @@ OUTPUT = ROOT / 'output'
 SHOTS = ROOT / 'screenshots'
 LOGS = ROOT / 'logs'
 PROFILE = ROOT / 'browser-profile'
-ENV_FILE = ROOT / '.env'
 LATEST = STATE / 'latest_picks.json'
 PREVIOUS = STATE / 'previous_picks.json'
 HEALTH = STATE / 'health.json'
@@ -57,16 +59,7 @@ for d in [STATE, OUTPUT, SHOTS, LOGS, PROFILE]:
 
 
 def load_env() -> Dict[str, str]:
-    env = {}
-    if ENV_FILE.exists():
-        for line in ENV_FILE.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            k, v = line.split('=', 1)
-            env[k.strip()] = v.strip()
-            os.environ.setdefault(k.strip(), v.strip())
-    return env
+    return load_dotenv(ROOT)
 
 
 def log(msg: str, echo: bool = False):
@@ -79,8 +72,7 @@ def log(msg: str, echo: bool = False):
 
 
 def json_dump(path: Path, obj: Any):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
+    atomic_write_json(path, obj)
 
 
 def json_load(path: Path) -> Any:
@@ -110,113 +102,6 @@ def strip_dynamic(data: Dict[str, Any]) -> Dict[str, Any]:
     d = copy.deepcopy(data)
     d.pop('fetched_at', None)
     return d
-
-
-def row_key(row: Dict[str, Any]) -> str:
-    return row.get('symbol') or row.get('company') or json.dumps(row, sort_keys=True)
-
-
-DYNAMIC_NOISE_FIELDS = {
-    'return',
-    'current_price',
-    'chart_return',
-    'market_cap',
-    'pe_ttm',
-    # Detail-panel fields are useful in reports but are occasionally missed when
-    # a row expansion/hydration races. Treating blank/non-blank flips as source
-    # changes created duplicate false alerts.
-    'buy_or_entry_price',
-    'revenue_ttm',
-    'revenue_growth_yoy',
-    'next_earnings',
-    'momentum',
-    'relative_strength',
-}
-
-ANALYST_SIGNAL_MAJOR_DELTA = 0.30
-ANALYST_SIGNAL_CATEGORY_DELTA = 0.25
-ANALYST_SIGNAL_STRONG_DELTA = 0.15
-
-
-def parse_analyst_signal(value: Any) -> tuple[str, float | None]:
-    """Parse strings like "Buy +0.27" into (label, score)."""
-    text = str(value or '').strip()
-    if not text:
-        return '', None
-    m = re.search(r'([+-]?\d+(?:\.\d+)?)\s*$', text)
-    score = float(m.group(1)) if m else None
-    label = text[:m.start()].strip() if m else text
-    label = re.sub(r'\s+', ' ', label)
-    return label, score
-
-
-def is_major_analyst_signal_change(old_value: Any, new_value: Any) -> bool:
-    """Only alert on meaningful analyst-signal moves, not small intraday noise.
-
-    Rules chosen for this user's alert preference:
-    - score move >= 0.30: always meaningful;
-    - label/category changes need score move >= 0.25;
-    - moves into/out of Strong Buy/Strong Sell need score move >= 0.15.
-    """
-    old_label, old_score = parse_analyst_signal(old_value)
-    new_label, new_score = parse_analyst_signal(new_value)
-    if str(old_value or '') == str(new_value or ''):
-        return False
-    if old_score is None or new_score is None:
-        return old_label != new_label and {'Strong Buy', 'Strong Sell'} & {old_label, new_label}
-    delta = abs(new_score - old_score)
-    if delta >= ANALYST_SIGNAL_MAJOR_DELTA:
-        return True
-    label_changed = old_label != new_label
-    if label_changed and delta >= ANALYST_SIGNAL_CATEGORY_DELTA:
-        return True
-    if label_changed and ({old_label, new_label} & {'Strong Buy', 'Strong Sell'}) and delta >= ANALYST_SIGNAL_STRONG_DELTA:
-        return True
-    return False
-
-
-def diff_rows(old_rows: List[Dict[str, Any]], new_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    old_map = {row_key(r): r for r in old_rows}
-    new_map = {row_key(r): r for r in new_rows}
-    added = sorted(set(new_map) - set(old_map))
-    removed = sorted(set(old_map) - set(new_map))
-    changed = []
-    for k in sorted(set(old_map) & set(new_map)):
-        fields = {}
-        keys = sorted(set(old_map[k]) | set(new_map[k]))
-        for field in keys:
-            if field in {'detail_error'} or field in DYNAMIC_NOISE_FIELDS:
-                continue
-            old_value = old_map[k].get(field, '')
-            new_value = new_map[k].get(field, '')
-            if field == 'analyst_signal':
-                if is_major_analyst_signal_change(old_value, new_value):
-                    fields[field] = {'old': old_value, 'new': new_value}
-                continue
-            if str(old_value) != str(new_value):
-                fields[field] = {'old': old_value, 'new': new_value}
-        if fields:
-            changed.append({'symbol': k, 'fields': fields})
-    return {'added': added, 'removed': removed, 'changed': changed}
-
-
-def compare(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
-    result = {'changed': False, 'monthly': {}, 'weekly': {}}
-    for section in ['monthly', 'weekly']:
-        sec = {}
-        old_date = old.get(section, {}).get('pick_date')
-        new_date = new.get(section, {}).get('pick_date')
-        # Do not alert on parser failures like "May 2026 -> Unknown".
-        # Unknown is missing metadata, not a source-side pick update.
-        if old_date != new_date and old_date not in (None, '', 'Unknown') and new_date not in (None, '', 'Unknown'):
-            sec['date'] = {'old': old_date, 'new': new_date}
-        rd = diff_rows(old.get(section, {}).get('rows', []), new.get(section, {}).get('rows', []))
-        sec.update(rd)
-        sec_changed = bool(sec.get('date') or sec.get('added') or sec.get('removed') or sec.get('changed'))
-        sec['changed_flag'] = sec_changed
-        result[section] = sec
-        result['changed'] = result['changed'] or sec_changed
-    return result
 
 
 def format_row_brief(row: Dict[str, Any], fields: List[str]) -> str:
@@ -514,12 +399,7 @@ def capture_logged_in_screenshots(which: List[str]) -> Dict[str, Path]:
 
 
 def prune_old_files(directory: Path, pattern: str, keep: int = 200):
-    files = sorted(directory.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in files[keep:]:
-        try:
-            p.unlink()
-        except Exception:
-            pass
+    prune_files(directory, pattern, keep)
 
 
 def fetch_current() -> Dict[str, Any]:
@@ -530,59 +410,11 @@ def fetch_current() -> Dict[str, Any]:
     report.PASSWORD = os.environ.get('QUANTGT_PASSWORD', '')
     data = report.fetch()
     validate_member_picks_data(data)
+    if str(data.get('monthly', {}).get('pick_date') or '') == 'Unknown':
+        log('warning: monthly pick date parsed as Unknown; date-only diff will be ignored')
     data['auth_verified'] = True
     data['source_policy'] = 'logged-in member page only; unauthenticated/demo data rejected'
     return data
-
-
-def validate_member_picks_data(data: Dict[str, Any]) -> None:
-    """Reject known unauthenticated/demo placeholder captures before state writes.
-
-    Quant GT can show demo Weekly Picks to logged-out visitors. Those pages may contain
-    plausible dates/symbols (observed: 05/15/26) but are not the user's member data.
-    report.fetch() already asserts an auth session cookie on rendered pages; this extra
-    data-level guard prevents stale/old code paths or site regressions from poisoning
-    monitor state.
-    """
-    monthly = data.get('monthly') or {}
-    weekly = data.get('weekly') or {}
-    weekly_rows = weekly.get('rows') or []
-    if not weekly_rows:
-        raise RuntimeError('logged-in weekly picks validation failed: no weekly rows captured')
-    weekly_date = str(weekly.get('pick_date') or '')
-    weekly_symbols = [str(r.get('symbol') or '') for r in weekly_rows]
-    # Known logged-out demo signature observed on 2026-05-20: all row details share
-    # the same fake price/metrics and long generic company-description placeholder.
-    generic_detail_rows = [
-        r for r in weekly_rows
-        if 'This company designs, develops, and markets a range of consumer and enterprise technology products and services worldwide' in str(r.get('relative_strength') or '')
-    ]
-    current_prices = {str(r.get('current_price') or '') for r in weekly_rows if r.get('current_price')}
-    demo_symbol_set = {'SNDK', 'LITE', 'AAOI', 'FORM', 'VIAV', 'ENPH'}
-    if weekly_date == '05/15/26' and demo_symbol_set.issubset(set(weekly_symbols)):
-        raise RuntimeError('rejected unauthenticated/demo Weekly Picks signature: 05/15/26')
-    if len(generic_detail_rows) >= max(3, len(weekly_rows) // 2):
-        raise RuntimeError('rejected unauthenticated/demo Weekly Picks signature: generic placeholder details')
-    if len(weekly_rows) >= 5 and len(current_prices) == 1 and '$184.62' in current_prices:
-        raise RuntimeError('rejected unauthenticated/demo Weekly Picks signature: repeated fake current price')
-    if not (monthly.get('rows') or []):
-        raise RuntimeError('logged-in monthly picks validation failed: no monthly rows captured')
-
-    # Data-quality guard: a partial row-detail scrape should not poison latest_picks.json
-    # and then trigger a second "restored fields" alert on the next successful scrape.
-    required_weekly_detail_fields = ['current_price', 'buy_or_entry_price', 'next_earnings', 'analyst_signal']
-    bad_weekly = []
-    for row in weekly_rows:
-        missing = [field for field in required_weekly_detail_fields if row.get(field) in (None, '')]
-        if missing:
-            bad_weekly.append(f"{row.get('symbol') or row.get('company') or '?'} missing {','.join(missing)}")
-    if bad_weekly:
-        raise RuntimeError('logged-in weekly picks validation failed: incomplete detail rows: ' + '; '.join(bad_weekly[:5]))
-
-    monthly_date = str(monthly.get('pick_date') or '')
-    if monthly_date == 'Unknown':
-        # Missing date is not fatal for the report, but it must not become a change alert.
-        log('warning: monthly pick date parsed as Unknown; date-only diff will be ignored')
 
 
 def write_health(**kwargs):

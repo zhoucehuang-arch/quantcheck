@@ -8,9 +8,12 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, time as dtime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from quantcheck.config import load_env as load_dotenv
+from quantcheck.schedule import parse_schedule
 
 ROOT = Path(os.environ.get("QUANTCHECK_HOME", Path(__file__).resolve().parents[1]))
 LOGS = ROOT / "logs"
@@ -19,45 +22,13 @@ LOG_FILE = LOGS / "quantcheck_scheduler.log"
 LOCK_FILE = ROOT / "state" / "quantcheck.lock"
 NY = ZoneInfo("America/New_York")
 
-DEFAULT_SCHEDULE = [
-    (8, 30, "picks"),
-    (8, 45, "health_site"),
-    (9, 0, "picks"),
-    (9, 40, "picks"),
-    (17, 0, "picks"),
-    (17, 15, "health_site"),
-]
-
-
 def log(msg: str):
     ts = datetime.now(timezone.utc).isoformat()
     LOG_FILE.open("a", encoding="utf-8").write(f"[{ts}] {msg}\n")
 
 
 def load_env():
-    env_path = ROOT / ".env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip())
-
-
-def parse_schedule(raw: str | None):
-    if not raw:
-        return DEFAULT_SCHEDULE
-    out = []
-    for item in raw.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        hhmm, kind = item.split(":", 1)
-        h, m = [int(x) for x in hhmm.split("-") if x] if "-" in hhmm else [int(x) for x in hhmm.split(":")]
-        out.append((h, m, kind))
-    return out or DEFAULT_SCHEDULE
+    load_dotenv(ROOT)
 
 
 def seconds_until_next(schedule):
@@ -66,8 +37,6 @@ def seconds_until_next(schedule):
     for h, m, kind in schedule:
         target = now.replace(hour=h, minute=m, second=0, microsecond=0)
         if target <= now:
-            target = target.replace(day=target.day)  # placeholder; adjusted below
-            from datetime import timedelta
             target = target + timedelta(days=1)
         candidates.append((target, kind))
     target, kind = min(candidates, key=lambda x: x[0])

@@ -2,21 +2,15 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timezone
-from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from playwright.sync_api import sync_playwright
 
-from quantgt_picks_check import ROOT, STATE, SHOTS, PROFILE, BASE, NY, load_env, ensure_login
+from quantcheck.picks_check import ROOT, STATE, SHOTS, PROFILE, BASE, NY, load_env, ensure_login
+from quantcheck.state import atomic_write_json
 
 LATEST = STATE / 'site_snapshot_latest.json'
 PREVIOUS = STATE / 'site_snapshot_previous.json'
-
-
-def clean(s: str) -> str:
-    return re.sub(r'\s+', ' ', (s or '').strip())
 
 
 def collect_page(page, url: str, name: str):
@@ -102,8 +96,8 @@ def main():
     raw_dir = STATE / 'raw_site'
     raw_dir.mkdir(parents=True, exist_ok=True)
     raw_path = raw_dir / f"site_snapshot_raw_{datetime.now(NY).strftime('%Y-%m-%d_%H%M%S')}.json"
-    raw_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding='utf-8')
-    LATEST.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding='utf-8')
+    atomic_write_json(raw_path, snapshot)
+    atomic_write_json(LATEST, snapshot)
     print(json.dumps({'status': 'ok', 'pages': len(collected), 'latest': str(LATEST), 'raw': str(raw_path), 'previous_exists': PREVIOUS.exists()}, ensure_ascii=False))
 
 if __name__ == '__main__':
