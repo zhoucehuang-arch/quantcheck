@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import html
 import json
 import os
@@ -44,6 +45,7 @@ PROFILE = ROOT / 'browser-profile'
 LATEST = STATE / 'latest_picks.json'
 PREVIOUS = STATE / 'previous_picks.json'
 HEALTH = STATE / 'health.json'
+LAST_CHANGE_NOTIFICATION = STATE / 'last_picks_change_notification.json'
 LOG_FILE = LOGS / 'quantgt_monitor.log'
 BASE = 'https://quantgt.io'
 NY = ZoneInfo('America/New_York')
@@ -297,6 +299,38 @@ def summarize_diff(diff: Dict[str, Any], compact: bool = False) -> str:
     return '\n'.join(lines) if lines else 'No changes.'
 
 
+def notification_fingerprint(diff: Dict[str, Any], data: Dict[str, Any]) -> str:
+    payload = {
+        'diff': diff,
+        'monthly_symbols': [r.get('symbol') or r.get('company') for r in data.get('monthly', {}).get('rows', []) or []],
+        'weekly_symbols': [r.get('symbol') or r.get('company') for r in data.get('weekly', {}).get('rows', []) or []],
+        'monthly_date': data.get('monthly', {}).get('pick_date'),
+        'weekly_date': data.get('weekly', {}).get('pick_date'),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def should_send_notification(diff: Dict[str, Any], data: Dict[str, Any], dedupe_path: Path = LAST_CHANGE_NOTIFICATION) -> bool:
+    fingerprint = notification_fingerprint(diff, data)
+    previous = {}
+    if dedupe_path.exists():
+        try:
+            previous = json_load(dedupe_path)
+        except Exception:
+            previous = {}
+    if previous.get('fingerprint') == fingerprint:
+        log('duplicate pick-change notification suppressed')
+        return False
+    json_dump(dedupe_path, {
+        'fingerprint': fingerprint,
+        'at': now_utc(),
+        'monthly_date': data.get('monthly', {}).get('pick_date'),
+        'weekly_date': data.get('weekly', {}).get('pick_date'),
+    })
+    return True
+
+
 def send_telegram(text: str, media: List[Path] | None = None):
     msg = text
     for p in media or []:
@@ -476,6 +510,11 @@ def run_check(force=False, no_random=False):
                      last_window=window or 'forced', monthly_date=data['monthly']['pick_date'], weekly_date=data['weekly']['pick_date'], changed=diff['changed'])
         if not diff['changed']:
             log('no pick changes')
+            return
+        if not should_send_notification(diff, data):
+            write_health(last_run_at=now_utc(), last_success_at=now_utc(), last_error=None, consecutive_failures=0,
+                         last_window=window or 'forced', monthly_date=data['monthly']['pick_date'], weekly_date=data['weekly']['pick_date'], changed=False,
+                         duplicate_notification_suppressed=True)
             return
         PREVIOUS.write_text(LATEST.read_text(encoding='utf-8'), encoding='utf-8')
         json_dump(LATEST, data)
