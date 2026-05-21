@@ -1,0 +1,17 @@
+[Unit]
+Description=Standalone Quant GT monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/quantcheck
+Environment=QUANTCHECK_HOME=/opt/quantcheck
+EnvironmentFile=/opt/quantcheck/.env
+ExecStart=/opt/quantcheck/.venv/bin/quantcheck --daemon
+Restart=always
+RestartSec=20
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

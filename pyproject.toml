@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantcheck"
+version = "0.1.0"
+description = "Standalone Quant GT monitor: scrape picks, generate Excel/screenshots, and email updates."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "quantcheck maintainers"}]
+dependencies = [
+  "openpyxl>=3.1.0",
+  "playwright>=1.44.0",
+  "pandas>=2.0.0",
+  "pandas-market-calendars>=4.4.0",
+  "google-api-python-client>=2.0.0",
+  "google-auth>=2.0.0",
+  "google-auth-oauthlib>=1.0.0",
+]
+
+[project.scripts]
+quantcheck = "quantcheck.scheduler:main"
+quantcheck-picks = "quantcheck.picks_check:main"
+quantcheck-report = "quantcheck.picks_report:main"
+quantcheck-health = "quantcheck.health_watchdog:main"
