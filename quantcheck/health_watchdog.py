@@ -74,7 +74,7 @@ def expected_windows_passed(dt_ny: datetime):
 
 def send_email(subject: str, body: str):
     env = load_env(ROOT)
-    recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'))
+    recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'), file_path=env.get('NOTIFY_EMAIL_FILE'))
     if not recipients:
         log(f'email skipped: NOTIFY_EMAIL_TO is not configured for {subject}')
         return

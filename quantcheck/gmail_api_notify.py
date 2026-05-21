@@ -26,8 +26,14 @@ def _log_failure(context: str, exc: Exception | str) -> None:
         pass
 
 
-def parse_recipients(value: str | Iterable[str] | None, default: str | None = None) -> List[str]:
+def parse_recipients(
+    value: str | Iterable[str] | None,
+    default: str | None = None,
+    file_path: str | Path | None = None,
+) -> List[str]:
     default = default or os.environ.get("NOTIFY_EMAIL_TO", "")
+    if file_path is None:
+        file_path = os.environ.get("NOTIFY_EMAIL_FILE", "")
     if value is None:
         raw_items = [default] if default else []
     elif isinstance(value, str):
@@ -36,14 +42,24 @@ def parse_recipients(value: str | Iterable[str] | None, default: str | None = No
         raw_items = []
         for item in value:
             raw_items.extend(str(item).replace(";", ",").split(","))
+    if file_path:
+        path = Path(file_path)
+        if not path.is_absolute():
+            path = ROOT / path
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                body = line.split("#", 1)[0].strip()
+                if body:
+                    raw_items.extend(body.replace(";", ",").split(","))
     recipients: list[str] = []
     seen: set[str] = set()
     for item in raw_items:
         addr = item.strip()
-        if not addr or addr in seen:
+        addr_key = addr.lower()
+        if not addr or addr_key in seen:
             continue
         recipients.append(addr)
-        seen.add(addr)
+        seen.add(addr_key)
     return recipients
 
 

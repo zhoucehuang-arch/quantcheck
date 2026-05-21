@@ -19,7 +19,21 @@ Required:
 ```env
 QUANTGT_EMAIL=your_quantgt_email
 QUANTGT_PASSWORD=your_quantgt_password
-NOTIFY_EMAIL_TO=recipient@example.com
+NOTIFY_EMAIL_FILE=notify_recipients.txt
+```
+
+Create the recipient list file, one address per line. Commas and semicolons are also accepted, and `#` starts a comment:
+
+```text
+recipient@example.com
+second@example.com
+# team@example.com
+```
+
+For quick one-off setups, inline recipients are still supported and are merged with the file list if both are configured:
+
+```env
+NOTIFY_EMAIL_TO=recipient@example.com,second@example.com
 ```
 
 SMTP:
@@ -136,7 +150,7 @@ Login fails or picks table is empty:
 
 No email arrives:
 
-- Check `NOTIFY_EMAIL_TO`.
+- Check `NOTIFY_EMAIL_FILE` or `NOTIFY_EMAIL_TO`.
 - Check `logs/quantcheck_email.log`.
 - For Gmail API, confirm the token exists at `GMAIL_API_TOKEN` and has the `gmail.send` scope.
 - For SMTP, confirm app-password requirements and TLS/STARTTLS settings.

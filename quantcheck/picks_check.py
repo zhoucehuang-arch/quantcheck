@@ -308,7 +308,7 @@ def send_telegram(text: str, media: List[Path] | None = None):
 
 def send_email(subject: str, body: str, attachments: List[Path] | None = None, html_body: str | None = None):
     env = load_env()
-    recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'))
+    recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'), file_path=env.get('NOTIFY_EMAIL_FILE'))
     if not recipients:
         log(f'email skipped: NOTIFY_EMAIL_TO is not configured for {subject}')
         return

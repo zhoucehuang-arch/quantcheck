@@ -118,7 +118,7 @@ def diff(old, new):
 
 def send_email(subject, body):
     env = load_env(ROOT)
-    recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'))
+    recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'), file_path=env.get('NOTIFY_EMAIL_FILE'))
     if not recipients:
         return
     deliver_email(subject, body, to=recipients)

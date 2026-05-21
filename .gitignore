@@ -8,6 +8,7 @@ output/
 screenshots/
 logs/
 .config/
+notify_recipients.txt
 *.xlsx
 *.png
 *.jpg
