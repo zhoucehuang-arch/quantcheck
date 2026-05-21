@@ -25,3 +25,7 @@ quantcheck = "quantcheck.scheduler:main"
 quantcheck-picks = "quantcheck.picks_check:main"
 quantcheck-report = "quantcheck.picks_report:main"
 quantcheck-health = "quantcheck.health_watchdog:main"
+
+[tool.setuptools.packages.find]
+include = ["quantcheck*"]
+exclude = ["systemd*", "tests*", "scripts*", "docs*"]
