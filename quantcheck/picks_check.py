@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import html
 import json
 import os
@@ -33,6 +32,7 @@ from quantcheck.config import load_env as load_dotenv
 from quantcheck.diff import compare
 from quantcheck import picks_report as report
 from quantcheck.gmail_api_notify import parse_recipients, send_email as deliver_email
+from quantcheck.notify_dedupe import should_send_notification
 from quantcheck.state import atomic_write_json, prune_old_files as prune_files
 from quantcheck.validation import validate_member_picks_data
 
@@ -297,38 +297,6 @@ def summarize_diff(diff: Dict[str, Any], compact: bool = False) -> str:
         if len(d.get('changed', [])) > 12:
             lines.append(f"- ... {len(d['changed']) - 12} more changed rows")
     return '\n'.join(lines) if lines else 'No changes.'
-
-
-def notification_fingerprint(diff: Dict[str, Any], data: Dict[str, Any]) -> str:
-    payload = {
-        'diff': diff,
-        'monthly_symbols': [r.get('symbol') or r.get('company') for r in data.get('monthly', {}).get('rows', []) or []],
-        'weekly_symbols': [r.get('symbol') or r.get('company') for r in data.get('weekly', {}).get('rows', []) or []],
-        'monthly_date': data.get('monthly', {}).get('pick_date'),
-        'weekly_date': data.get('weekly', {}).get('pick_date'),
-    }
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode('utf-8')
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def should_send_notification(diff: Dict[str, Any], data: Dict[str, Any], dedupe_path: Path = LAST_CHANGE_NOTIFICATION) -> bool:
-    fingerprint = notification_fingerprint(diff, data)
-    previous = {}
-    if dedupe_path.exists():
-        try:
-            previous = json_load(dedupe_path)
-        except Exception:
-            previous = {}
-    if previous.get('fingerprint') == fingerprint:
-        log('duplicate pick-change notification suppressed')
-        return False
-    json_dump(dedupe_path, {
-        'fingerprint': fingerprint,
-        'at': now_utc(),
-        'monthly_date': data.get('monthly', {}).get('pick_date'),
-        'weekly_date': data.get('weekly', {}).get('pick_date'),
-    })
-    return True
 
 
 def send_telegram(text: str, media: List[Path] | None = None):

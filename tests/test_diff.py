@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from quantcheck.diff import compare, diff_rows, parse_analyst_signal
-from quantcheck.picks_check import should_send_notification
+from quantcheck.notify_dedupe import should_send_notification
 
 
 def sample_picks():
