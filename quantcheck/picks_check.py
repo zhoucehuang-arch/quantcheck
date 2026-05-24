@@ -479,7 +479,7 @@ def run_check(force=False, no_random=False):
         if not diff['changed']:
             log('no pick changes')
             return
-        if not should_send_notification(diff, data):
+        if not should_send_notification(diff, data, dedupe_path=LAST_CHANGE_NOTIFICATION):
             write_health(last_run_at=now_utc(), last_success_at=now_utc(), last_error=None, consecutive_failures=0,
                          last_window=window or 'forced', monthly_date=data['monthly']['pick_date'], weekly_date=data['weekly']['pick_date'], changed=False,
                          duplicate_notification_suppressed=True)
