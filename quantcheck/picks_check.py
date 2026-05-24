@@ -191,15 +191,16 @@ def build_notification_html(data: Dict[str, Any], diff: Dict[str, Any] | None = 
         if diff_obj is None:
             return ''
 
-        pill = 'display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;line-height:1;background:#ffffff;border:1px solid #d7e3da;color:#334155;margin:0 6px 6px 0;'
-        add_pill = pill + 'border-color:#86efac;background:#f0fdf4;color:#15803d;'
-        remove_pill = pill + 'border-color:#fecaca;background:#fff7f7;color:#b91c1c;'
-        row_style = 'border-top:1px solid #e6efe8;padding:9px 0;'
-        label_style = 'font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:3px;'
-        value_style = 'font-size:14px;color:#0f172a;line-height:1.45;'
-        old_style = 'display:inline-block;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:3px 7px;margin:2px 4px 2px 0;'
-        new_style = 'display:inline-block;color:#0f7a36;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:3px 7px;margin:2px 0;'
-        arrow = '<span style="color:#94a3b8;font-weight:700;margin:0 4px;">→</span>'
+        tag_style = 'display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;line-height:1;background:#ffffff;border:1px solid #d7e3da;color:#334155;margin:0 6px 6px 0;white-space:nowrap;'
+        add_pill = tag_style + 'border-color:#86efac;background:#f0fdf4;color:#15803d;'
+        remove_pill = tag_style + 'border-color:#fecaca;background:#fff7f7;color:#b91c1c;'
+        change_th = TH
+        change_td = 'border-bottom:1px solid #d7e3da;padding:10px 12px;color:#0f172a;vertical-align:middle;background:#ffffff;font-size:14px;line-height:1.35;'
+        symbol_td = change_td + 'font-weight:800;color:#16a34a;white-space:nowrap;'
+        field_td = change_td + 'font-weight:700;color:#334155;white-space:nowrap;'
+        old_td = change_td + 'color:#64748b;'
+        new_td = change_td + 'color:#0f7a36;font-weight:700;background:#f8fff9;'
+        arrow_td = change_td + 'text-align:center;color:#94a3b8;font-weight:800;width:36px;'
 
         def field_label(name: str) -> str:
             return esc(str(name).replace('_', ' ').title())
@@ -209,24 +210,23 @@ def build_notification_html(data: Dict[str, Any], diff: Dict[str, Any] | None = 
                 return ''
             return ''.join(f'<span style="{style}">{esc(item)}</span>' for item in items)
 
+        def change_row(symbol: str, field: str, old: Any, new: Any) -> str:
+            return f'''
+              <tr>
+                <td style="{symbol_td}">{esc(symbol or '?')}</td>
+                <td style="{field_td}">{field_label(field)}</td>
+                <td style="{old_td}">{esc(old)}</td>
+                <td style="{arrow_td}">→</td>
+                <td style="{new_td}">{esc(new)}</td>
+              </tr>'''
+
         def changed_rows(rows: List[Dict[str, Any]]) -> str:
-            if not rows:
-                return ''
             parts = []
             for row in rows:
                 fields = row.get('fields') or {}
-                field_bits = []
+                symbol = row.get('symbol') or '?'
                 for name, vals in fields.items():
-                    field_bits.append(f'''
-                    <div style="margin:5px 0 0 0;">
-                      <span style="font-size:12px;font-weight:700;color:#334155;display:inline-block;min-width:98px;">{field_label(name)}</span>
-                      <span style="{old_style}">{esc(vals.get('old'))}</span>{arrow}<span style="{new_style}">{esc(vals.get('new'))}</span>
-                    </div>''')
-                parts.append(f'''
-                <div style="{row_style}">
-                  <div style="font-size:15px;font-weight:800;color:#16a34a;margin-bottom:2px;">{esc(row.get('symbol') or '?')}</div>
-                  {''.join(field_bits)}
-                </div>''')
+                    parts.append(change_row(symbol, name, vals.get('old'), vals.get('new')))
             return ''.join(parts)
 
         def section(key: str, title: str) -> str:
@@ -247,30 +247,46 @@ def build_notification_html(data: Dict[str, Any], diff: Dict[str, Any] | None = 
             if changed:
                 summary_bits.append(f'{len(changed)} changed')
             summary = ' · '.join(summary_bits) if summary_bits else 'changed'
-            date_html = ''
+            date_rows = ''
             if date:
-                date_html = f'''
-                <div style="{row_style}">
-                  <div style="{label_style}">Date</div>
-                  <div style="{value_style}"><span style="{old_style}">{esc(date.get('old'))}</span>{arrow}<span style="{new_style}">{esc(date.get('new'))}</span></div>
-                </div>'''
-            add_remove_html = ''
-            if added or removed:
-                add_remove_html = f'''
-                <div style="{row_style}">
-                  {f'<div style="{label_style}">Added</div><div>{pills(added, add_pill)}</div>' if added else ''}
-                  {f'<div style="{label_style};margin-top:6px;">Removed</div><div>{pills(removed, remove_pill)}</div>' if removed else ''}
-                </div>'''
+                date_rows = change_row('—', 'Date', date.get('old'), date.get('new'))
+            add_remove_rows = ''
+            if added:
+                add_remove_rows += f'''
+              <tr>
+                <td style="{symbol_td}">—</td>
+                <td style="{field_td}">Added</td>
+                <td style="{old_td}">—</td>
+                <td style="{arrow_td}">→</td>
+                <td style="{new_td}">{pills(added, add_pill)}</td>
+              </tr>'''
+            if removed:
+                add_remove_rows += f'''
+              <tr>
+                <td style="{symbol_td}">—</td>
+                <td style="{field_td}">Removed</td>
+                <td style="{old_td}">{pills(removed, remove_pill)}</td>
+                <td style="{arrow_td}">→</td>
+                <td style="{new_td}">—</td>
+              </tr>'''
+            rows_html = date_rows + add_remove_rows + changed_rows(changed)
+            if not rows_html:
+                rows_html = f'<tr><td colspan="5" style="{change_td}">No detail rows captured</td></tr>'
             return f'''
-            <div style="background:#ffffff;border:1px solid #d7e3da;border-radius:12px;margin:12px 0 0 0;overflow:hidden;">
-              <div style="background:#f0fdf4;border-bottom:1px solid #d7e3da;padding:11px 13px;">
-                <div style="font-size:16px;font-weight:800;color:#0f172a;line-height:1.2;">{esc(title)}</div>
-                <div style="font-size:12px;color:#64748b;margin-top:4px;">{esc(summary)}</div>
-              </div>
-              <div style="padding:0 13px 3px 13px;">
-                {date_html}
-                {add_remove_html}
-                {changed_rows(changed)}
+            <div style="margin:14px 0 0 0;">
+              <h3 style="font-size:18px;line-height:1.3;color:#0f172a;margin:0 0 6px 0;">{esc(title)}</h3>
+              <div style="font-size:15px;color:#64748b;margin:0 0 10px 0;">{esc(summary)}</div>
+              <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #d7e3da;border-radius:12px;background:#ffffff;">
+                <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;min-width:760px;font-size:14px;line-height:1.35;">
+                  <thead><tr>
+                    <th style="{change_th}">Symbol</th>
+                    <th style="{change_th}">Field</th>
+                    <th style="{change_th}">Previous</th>
+                    <th style="{change_th};text-align:center;width:36px;">→</th>
+                    <th style="{change_th}">New</th>
+                  </tr></thead>
+                  <tbody>{rows_html}</tbody>
+                </table>
               </div>
             </div>'''
 

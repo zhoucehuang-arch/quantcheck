@@ -51,6 +51,39 @@ class NotificationHtmlTests(unittest.TestCase):
         self.assertIn("→", html)
         self.assertNotIn("<ul", html)
 
+    def test_changes_use_email_safe_tables_aligned_with_picks_tables(self):
+        data = {
+            "fetched_at": "2026-05-24T16:10:09",
+            "source": "https://quantgt.io",
+            "monthly": {"pick_date": "Unknown", "rows": []},
+            "weekly": {"pick_date": "Week of May 25, 2026", "rows": []},
+        }
+        diff = {
+            "changed": True,
+            "monthly": {
+                "changed_flag": True,
+                "date": None,
+                "added": [],
+                "removed": [],
+                "changed": [
+                    {"symbol": "AAOI", "fields": {"analyst_signal": {"old": "Neutral +0.02", "new": "Buy +0.45"}}},
+                ],
+            },
+            "weekly": {"changed_flag": False, "date": None, "added": [], "removed": [], "changed": []},
+        }
+
+        html = build_notification_html(data, diff, context="layout test")
+
+        self.assertIn('min-width:980px', html)
+        self.assertIn('min-width:760px', html)
+        self.assertIn('Field', html)
+        self.assertIn('Previous', html)
+        self.assertIn('New', html)
+        self.assertIn('<td style=', html)
+        self.assertIn('font-size:14px', html)
+        self.assertNotIn('display:inline-block;color:#64748b', html)
+        self.assertNotIn('min-width:98px', html)
+
 
 if __name__ == "__main__":
     unittest.main()
