@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any
@@ -20,8 +19,8 @@ from typing import Dict, List, Any
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
-from openpyxl.formatting.rule import CellIsRule
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from quantcheck.scrape_parse import clean_text, extract_pick_date, rows_from_card_texts, rows_from_matrix
 
 BASE = "https://quantgt.io"
 ROOT = Path(os.environ.get("QUANTCHECK_HOME", Path(__file__).resolve().parents[1]))
@@ -50,10 +49,6 @@ RED = "DC2626"
 AMBER = "D97706"
 
 
-def clean_text(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "").strip())
-
-
 def is_login_prompt_visible(page) -> bool:
     """Return true only for real auth prompts, not marketing copy mentioning sign in."""
     try:
@@ -72,6 +67,32 @@ def has_auth_session(page) -> bool:
         return False
 
 
+def has_picks_content(page) -> bool:
+    try:
+        return bool(page.evaluate(
+            """() => {
+              const text = (document.querySelector('main')?.innerText || document.body.innerText || '').replace(/\\s+/g, ' ');
+              const tableRows = document.querySelectorAll('table tbody tr').length;
+              const ariaRows = document.querySelectorAll('[role="row"] [role="cell"], [role="row"] [role="gridcell"]').length;
+              return tableRows > 0 || ariaRows > 0 || /\\bGT\\s*Score\\b/i.test(text);
+            }"""
+        ))
+    except Exception:
+        return False
+
+
+def wait_for_picks_content(page, timeout: int = 20000) -> None:
+    page.wait_for_function(
+        """() => {
+          const text = (document.querySelector('main')?.innerText || document.body.innerText || '').replace(/\\s+/g, ' ');
+          const tableRows = document.querySelectorAll('table tbody tr').length;
+          const ariaRows = document.querySelectorAll('[role="row"] [role="cell"], [role="row"] [role="gridcell"]').length;
+          return tableRows > 0 || ariaRows > 0 || /\\bGT\\s*Score\\b/i.test(text);
+        }""",
+        timeout=timeout,
+    )
+
+
 def login(page):
     # `networkidle` is brittle on Quant GT because embedded market/news widgets
     # can keep polling. Use document readiness + table hydration instead.
@@ -81,7 +102,7 @@ def login(page):
     except PlaywrightTimeoutError:
         pass
     page.wait_for_timeout(2500)
-    if page.locator('table tbody tr').count() > 0 and has_auth_session(page) and not is_login_prompt_visible(page):
+    if has_picks_content(page) and has_auth_session(page) and not is_login_prompt_visible(page):
         return
     page.goto(f"{BASE}/login?redirect=/dashboard/quantgt-picks", wait_until="domcontentloaded", timeout=45000)
     try:
@@ -107,8 +128,8 @@ def login(page):
     except PlaywrightTimeoutError:
         pass
     page.wait_for_timeout(3000)
-    page.wait_for_function("""() => document.querySelectorAll('table tbody tr').length > 0""", timeout=20000)
-    if page.locator('table tbody tr').count() == 0 or is_login_prompt_visible(page):
+    wait_for_picks_content(page)
+    if not has_picks_content(page) or is_login_prompt_visible(page):
         raise RuntimeError("Login did not complete or picks table not visible")
 
 
@@ -120,31 +141,31 @@ def assert_authenticated_page(page, label: str):
     names = {c.get('name') for c in cookies}
     if '__Secure-authjs.session-token' not in names:
         raise RuntimeError(f"{label} page is not authenticated: missing auth session cookie")
-    if page.locator('table tbody tr').count() == 0:
-        raise RuntimeError(f"{label} page has no picks table rows")
+    if not has_picks_content(page):
+        raise RuntimeError(f"{label} page has no picks content")
 
 
 def rows_from_table(page, mode: str) -> List[Dict[str, Any]]:
     js = r"""
     (mode) => {
-      const rows = [...document.querySelectorAll('table tbody tr')];
-      const out = [];
-      for (const tr of rows) {
-        const cells = [...tr.querySelectorAll('td')].map(td => td.innerText.trim().replace(/\s+/g, ' '));
-        if (mode === 'monthly') {
-          if (cells.length >= 7 && !cells[0].startsWith('$')) {
-            out.push({company: cells[0], symbol: cells[1], held_since: cells[2], return: cells[3], sector: cells[4], rating: cells[5], gt_score: cells[6]});
-          }
-        } else {
-          if (cells.length >= 5 && !cells[0].startsWith('$')) {
-            out.push({company: cells[0], symbol: cells[1], sector: cells[2], rating: cells[3], gt_score: cells[4]});
-          }
-        }
-      }
-      return out;
+      const clean = s => (s || '').trim().replace(/\s+/g, ' ');
+      const tableRows = [...document.querySelectorAll('table tr')]
+        .map(tr => [...tr.querySelectorAll('th,td')].map(td => clean(td.innerText || td.textContent)))
+        .filter(row => row.some(Boolean));
+      const ariaRows = [...document.querySelectorAll('[role="row"]')]
+        .map(tr => [...tr.querySelectorAll('[role="columnheader"],[role="cell"],[role="gridcell"]')].map(td => clean(td.innerText || td.textContent)))
+        .filter(row => row.some(Boolean));
+      const cards = [...document.querySelectorAll('main article, main [data-slot*="card"], main [class*="card"], main [class*="Card"]')]
+        .map(el => clean(el.innerText || el.textContent))
+        .filter(text => text && /GT\s*Score|Rating|Sector|Held Since|Return/i.test(text));
+      return {matrix: tableRows.length ? tableRows : ariaRows, cards};
     }
     """
-    return page.evaluate(js, mode)
+    payload = page.evaluate(js, mode)
+    rows = rows_from_matrix(payload.get("matrix") or [], mode)
+    if rows:
+        return rows
+    return rows_from_card_texts(payload.get("cards") or [], mode)
 
 
 def extract_details_for_visible_expanded(page) -> Dict[str, str]:
@@ -265,11 +286,10 @@ def fetch():
             pass
         page.wait_for_timeout(2500)
         assert_authenticated_page(page, "monthly")
-        # Sometimes the authenticated table hydrates a moment after document load.
-        page.wait_for_function("""() => document.querySelectorAll('table tbody tr').length > 0""", timeout=20000)
+        # Sometimes the authenticated picks content hydrates after document load.
+        wait_for_picks_content(page)
         monthly_date_text = clean_text(page.locator("main").inner_text())
-        m = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}", monthly_date_text)
-        monthly_pick_date = m.group(0) if m else "Unknown"
+        monthly_pick_date = extract_pick_date(monthly_date_text, "monthly")
         monthly_rows = rows_from_table(page, "monthly")
         monthly_rows = expand_and_attach_details(page, monthly_rows, "monthly")
 
@@ -280,10 +300,9 @@ def fetch():
             pass
         page.wait_for_timeout(2500)
         assert_authenticated_page(page, "weekly")
-        page.wait_for_function("""() => document.querySelectorAll('table tbody tr').length > 0""", timeout=20000)
+        wait_for_picks_content(page)
         main_text = clean_text(page.locator("main").inner_text())
-        m = re.search(r"\b\d{2}/\d{2}/\d{2}\b", main_text)
-        weekly_pick_date = m.group(0) if m else "Unknown"
+        weekly_pick_date = extract_pick_date(main_text, "weekly")
         weekly_rows = rows_from_table(page, "weekly")
         weekly_rows = expand_and_attach_details(page, weekly_rows, "weekly")
 

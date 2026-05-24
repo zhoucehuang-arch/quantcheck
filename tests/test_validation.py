@@ -43,6 +43,17 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "incomplete detail rows"):
             validate_member_picks_data(data)
 
+    def test_new_layout_without_detail_rows_passes(self):
+        data = {
+            "monthly": {"pick_date": "May Holdings 05/01/26 - now", "rows": [{"symbol": "M1"}]},
+            "weekly": {
+                "pick_date": "05/22/26",
+                "rows": [{"symbol": "W1", "company": "Weekly One", "sector": "Tech", "rating": "Buy", "gt_score": "88"}],
+            },
+        }
+
+        validate_member_picks_data(data)
+
 
 if __name__ == "__main__":
     unittest.main()

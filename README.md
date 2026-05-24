@@ -13,6 +13,7 @@ It replaces a Hermes CronJob-style scheduler with a small self-contained Python 
 - Guards against logged-out demo data and partial row-detail captures.
 - Email delivery through SMTP or Gmail API.
 - Built-in New York time scheduler, file lock, timeouts, health checks, and logs.
+- Site snapshots for Quant GT Picks, TradingView Indicator, AI Winners, RRG, Market Tools, and Study Guide pages.
 
 ## Requirements
 

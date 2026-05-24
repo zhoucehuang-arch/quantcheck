@@ -28,10 +28,18 @@ def validate_member_picks_data(data: Dict[str, Any]) -> None:
         raise RuntimeError("logged-in monthly picks validation failed: no monthly rows captured")
 
     required_weekly_detail_fields = ["current_price", "buy_or_entry_price", "next_earnings", "analyst_signal"]
-    bad_weekly = []
-    for row in weekly_rows:
-        missing = [field for field in required_weekly_detail_fields if row.get(field) in (None, "")]
-        if missing:
-            bad_weekly.append(f"{row.get('symbol') or row.get('company') or '?'} missing {','.join(missing)}")
-    if bad_weekly:
+    complete_detail_rows = [
+        row for row in weekly_rows
+        if all(row.get(field) not in (None, "") for field in required_weekly_detail_fields)
+    ]
+    detailish_rows = [
+        row for row in weekly_rows
+        if any(row.get(field) not in (None, "") for field in required_weekly_detail_fields)
+    ]
+    if detailish_rows and len(complete_detail_rows) != len(weekly_rows):
+        bad_weekly = []
+        for row in weekly_rows:
+            missing = [field for field in required_weekly_detail_fields if row.get(field) in (None, "")]
+            if missing:
+                bad_weekly.append(f"{row.get('symbol') or row.get('company') or '?'} missing {','.join(missing)}")
         raise RuntimeError("logged-in weekly picks validation failed: incomplete detail rows: " + "; ".join(bad_weekly[:5]))

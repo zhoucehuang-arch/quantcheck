@@ -58,6 +58,9 @@ def main():
             ('dashboard', f'{BASE}/dashboard'),
             ('monthly', f'{BASE}/dashboard/quantgt-picks'),
             ('weekly', f'{BASE}/dashboard/weekly-picks'),
+            ('tradingview_indicator', f'{BASE}/dashboard/tradingview-indicator'),
+            ('ai_winners', f'{BASE}/dashboard/who-is-winning-ai'),
+            ('rrg', f'{BASE}/dashboard/rrg'),
             ('market_tools', f'{BASE}/dashboard/market-tools'),
             ('study_guide', f'{BASE}/dashboard/study-guide'),
         ]

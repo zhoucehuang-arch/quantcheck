@@ -159,6 +159,7 @@ Site-change alerts are noisy:
 
 - Review `quantcheck/site_diff_notify.py`.
 - Market Tools content is intentionally suppressed because it mostly contains external market/news churn.
+- TradingView Indicator, AI Winners, and RRG are included in site snapshots so navigation/function changes are visible.
 
 Daemon appears stuck:
 

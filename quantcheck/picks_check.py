@@ -370,7 +370,7 @@ def ensure_login(page, env: Dict[str, str]):
     except PlaywrightTimeoutError:
         pass
     page.wait_for_timeout(2500)
-    if page.locator('table tbody tr').count() > 0 and report.has_auth_session(page) and not report.is_login_prompt_visible(page):
+    if report.has_picks_content(page) and report.has_auth_session(page) and not report.is_login_prompt_visible(page):
         return
     email = env.get('QUANTGT_EMAIL')
     password = env.get('QUANTGT_PASSWORD')
@@ -400,7 +400,7 @@ def ensure_login(page, env: Dict[str, str]):
     except PlaywrightTimeoutError:
         pass
     page.wait_for_timeout(2500)
-    page.wait_for_function("""() => document.querySelectorAll('table tbody tr').length > 0""", timeout=20000)
+    report.wait_for_picks_content(page)
     report.assert_authenticated_page(page, 'monthly')
 
 
@@ -423,7 +423,7 @@ def capture_logged_in_screenshots(which: List[str]) -> Dict[str, Path]:
             except PlaywrightTimeoutError:
                 pass
             page.wait_for_timeout(3000)
-            page.wait_for_function("""() => document.querySelectorAll('table tbody tr').length > 0""", timeout=20000)
+            report.wait_for_picks_content(page)
             report.assert_authenticated_page(page, name)
             path = SHOTS / f'{name}_picks_{ts}.png'
             page.screenshot(path=str(path), full_page=True)

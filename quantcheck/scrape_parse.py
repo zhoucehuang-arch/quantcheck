@@ -1,0 +1,188 @@
+from __future__ import annotations
+
+import re
+from typing import Any, Dict, Iterable, List
+
+
+MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
+KNOWN_DETAIL_LABELS = [
+    "Buy price:",
+    "Entry price:",
+    "P/E (TTM)",
+    "Market Cap",
+    "Revenue (TTM)",
+    "Revenue Growth (YoY)",
+    "Next Earnings",
+    "Analyst Signal",
+    "Momentum",
+    "Relative Strength",
+]
+
+
+def clean_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def normalize_header(value: Any) -> str:
+    text = clean_text(value).lower()
+    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+
+HEADER_ALIASES = {
+    "company": "company",
+    "name": "company",
+    "symbol": "symbol",
+    "ticker": "symbol",
+    "held_since": "held_since",
+    "holding_since": "held_since",
+    "return": "return",
+    "portfolio_return": "return",
+    "sector": "sector",
+    "rating": "rating",
+    "gt_score": "gt_score",
+    "score": "gt_score",
+}
+
+
+def canonical_header(value: Any) -> str | None:
+    return HEADER_ALIASES.get(normalize_header(value))
+
+
+def extract_pick_date(text: str, mode: str) -> str:
+    clean = clean_text(text)
+    if mode == "monthly":
+        match = re.search(rf"\b(?:{MONTHS})\s+(?:Holdings\s+)?\d{{2}}/\d{{2}}/\d{{2}}\s*-\s*(?:now|present|current)\b", clean, re.I)
+        if match:
+            return match.group(0)
+        match = re.search(rf"\b(?:{MONTHS})\s+\d{{4}}\b", clean)
+        if match:
+            return match.group(0)
+        match = re.search(rf"\b(?:{MONTHS})\s+Holdings\b", clean, re.I)
+        if match:
+            return match.group(0)
+    else:
+        match = re.search(r"\b\d{2}/\d{2}/\d{2}\b", clean)
+        if match:
+            return match.group(0)
+    return "Unknown"
+
+
+def _looks_like_detail_row(cells: list[str]) -> bool:
+    if not cells:
+        return False
+    joined = " ".join(cells)
+    return cells[0].startswith("$") or any(label in joined for label in KNOWN_DETAIL_LABELS)
+
+
+def rows_from_matrix(matrix: Iterable[Iterable[Any]], mode: str) -> List[Dict[str, Any]]:
+    rows = [[clean_text(cell) for cell in row] for row in matrix]
+    rows = [row for row in rows if any(row)]
+    if not rows:
+        return []
+
+    header_index = None
+    headers: list[str | None] = []
+    for idx, row in enumerate(rows[:8]):
+        candidate = [canonical_header(cell) for cell in row]
+        if "symbol" in candidate and "gt_score" in candidate:
+            header_index = idx
+            headers = candidate
+            break
+
+    if header_index is not None:
+        data_rows = rows[header_index + 1:]
+        out = []
+        for row in data_rows:
+            if _looks_like_detail_row(row):
+                continue
+            item: dict[str, Any] = {}
+            for col, key in enumerate(headers):
+                if key and col < len(row):
+                    item[key] = row[col]
+            if item.get("symbol") and item.get("gt_score"):
+                out.append(item)
+        return out
+
+    out = []
+    for cells in rows:
+        if _looks_like_detail_row(cells):
+            continue
+        if mode == "monthly" and len(cells) >= 7 and not cells[0].startswith("$"):
+            out.append({
+                "company": cells[0],
+                "symbol": cells[1],
+                "held_since": cells[2],
+                "return": cells[3],
+                "sector": cells[4],
+                "rating": cells[5],
+                "gt_score": cells[6],
+            })
+        elif mode == "weekly" and len(cells) >= 5 and not cells[0].startswith("$"):
+            out.append({
+                "company": cells[0],
+                "symbol": cells[1],
+                "sector": cells[2],
+                "rating": cells[3],
+                "gt_score": cells[4],
+            })
+    return out
+
+
+def row_from_card_text(text: str, mode: str) -> Dict[str, Any] | None:
+    clean = clean_text(text)
+    if not clean:
+        return None
+    symbol_match = re.search(r"\b[A-Z][A-Z0-9.]{0,5}\b", clean)
+    score_match = re.search(r"\bGT\s*Score\b[:\s]*([0-9]+(?:\.[0-9]+)?)", clean, re.I)
+    if not symbol_match or not score_match:
+        return None
+    row: dict[str, Any] = {"symbol": symbol_match.group(0), "gt_score": score_match.group(1)}
+    for key, label in [
+        ("company", "Company"),
+        ("sector", "Sector"),
+        ("rating", "Rating"),
+        ("held_since", "Held Since"),
+        ("return", "Return"),
+    ]:
+        value = _value_after_label(clean, label)
+        if value:
+            row[key] = value
+    if "company" not in row:
+        before_symbol = clean[:symbol_match.start()].strip(" -|")
+        if before_symbol:
+            row["company"] = before_symbol.split(" GT Score")[0].strip()
+    required = {"company", "symbol", "gt_score"}
+    if required.issubset(row):
+        return row
+    return None
+
+
+def rows_from_card_texts(texts: Iterable[str], mode: str) -> List[Dict[str, Any]]:
+    out = []
+    seen = set()
+    for text in texts:
+        row = row_from_card_text(text, mode)
+        if not row:
+            continue
+        key = row.get("symbol") or repr(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def _value_after_label(text: str, label: str) -> str:
+    labels = ["Company", "Symbol", "Held Since", "Return", "Sector", "Rating", "GT Score", *KNOWN_DETAIL_LABELS]
+    pattern = re.compile(rf"\b{re.escape(label)}\b\s*:?\s*", re.I)
+    match = pattern.search(text)
+    if not match:
+        return ""
+    end = len(text)
+    for next_label in labels:
+        if next_label.lower() == label.lower():
+            continue
+        next_match = re.search(rf"\b{re.escape(next_label)}\b\s*:?", text[match.end():], re.I)
+        if next_match:
+            end = min(end, match.end() + next_match.start())
+    return clean_text(text[match.end():end])
