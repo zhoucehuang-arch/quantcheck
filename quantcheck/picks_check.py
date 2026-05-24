@@ -190,12 +190,96 @@ def build_notification_html(data: Dict[str, Any], diff: Dict[str, Any] | None = 
     def change_box(diff_obj: Dict[str, Any] | None) -> str:
         if diff_obj is None:
             return ''
-        summary = summarize_diff(diff_obj)
-        items = ''.join(f'<li style="margin:3px 0;">{esc(line.lstrip("- "))}</li>' for line in summary.splitlines() if line.strip())
+
+        pill = 'display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;line-height:1;background:#ffffff;border:1px solid #d7e3da;color:#334155;margin:0 6px 6px 0;'
+        add_pill = pill + 'border-color:#86efac;background:#f0fdf4;color:#15803d;'
+        remove_pill = pill + 'border-color:#fecaca;background:#fff7f7;color:#b91c1c;'
+        row_style = 'border-top:1px solid #e6efe8;padding:9px 0;'
+        label_style = 'font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:3px;'
+        value_style = 'font-size:14px;color:#0f172a;line-height:1.45;'
+        old_style = 'display:inline-block;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:3px 7px;margin:2px 4px 2px 0;'
+        new_style = 'display:inline-block;color:#0f7a36;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:3px 7px;margin:2px 0;'
+        arrow = '<span style="color:#94a3b8;font-weight:700;margin:0 4px;">→</span>'
+
+        def field_label(name: str) -> str:
+            return esc(str(name).replace('_', ' ').title())
+
+        def pills(items: List[Any], style: str) -> str:
+            if not items:
+                return ''
+            return ''.join(f'<span style="{style}">{esc(item)}</span>' for item in items)
+
+        def changed_rows(rows: List[Dict[str, Any]]) -> str:
+            if not rows:
+                return ''
+            parts = []
+            for row in rows:
+                fields = row.get('fields') or {}
+                field_bits = []
+                for name, vals in fields.items():
+                    field_bits.append(f'''
+                    <div style="margin:5px 0 0 0;">
+                      <span style="font-size:12px;font-weight:700;color:#334155;display:inline-block;min-width:98px;">{field_label(name)}</span>
+                      <span style="{old_style}">{esc(vals.get('old'))}</span>{arrow}<span style="{new_style}">{esc(vals.get('new'))}</span>
+                    </div>''')
+                parts.append(f'''
+                <div style="{row_style}">
+                  <div style="font-size:15px;font-weight:800;color:#16a34a;margin-bottom:2px;">{esc(row.get('symbol') or '?')}</div>
+                  {''.join(field_bits)}
+                </div>''')
+            return ''.join(parts)
+
+        def section(key: str, title: str) -> str:
+            d = diff_obj.get(key, {}) or {}
+            if not d.get('changed_flag'):
+                return ''
+            added = d.get('added') or []
+            removed = d.get('removed') or []
+            changed = d.get('changed') or []
+            date = d.get('date')
+            summary_bits = []
+            if date:
+                summary_bits.append('date')
+            if added:
+                summary_bits.append(f'+{len(added)} added')
+            if removed:
+                summary_bits.append(f'-{len(removed)} removed')
+            if changed:
+                summary_bits.append(f'{len(changed)} changed')
+            summary = ' · '.join(summary_bits) if summary_bits else 'changed'
+            date_html = ''
+            if date:
+                date_html = f'''
+                <div style="{row_style}">
+                  <div style="{label_style}">Date</div>
+                  <div style="{value_style}"><span style="{old_style}">{esc(date.get('old'))}</span>{arrow}<span style="{new_style}">{esc(date.get('new'))}</span></div>
+                </div>'''
+            add_remove_html = ''
+            if added or removed:
+                add_remove_html = f'''
+                <div style="{row_style}">
+                  {f'<div style="{label_style}">Added</div><div>{pills(added, add_pill)}</div>' if added else ''}
+                  {f'<div style="{label_style};margin-top:6px;">Removed</div><div>{pills(removed, remove_pill)}</div>' if removed else ''}
+                </div>'''
+            return f'''
+            <div style="background:#ffffff;border:1px solid #d7e3da;border-radius:12px;margin:12px 0 0 0;overflow:hidden;">
+              <div style="background:#f0fdf4;border-bottom:1px solid #d7e3da;padding:11px 13px;">
+                <div style="font-size:16px;font-weight:800;color:#0f172a;line-height:1.2;">{esc(title)}</div>
+                <div style="font-size:12px;color:#64748b;margin-top:4px;">{esc(summary)}</div>
+              </div>
+              <div style="padding:0 13px 3px 13px;">
+                {date_html}
+                {add_remove_html}
+                {changed_rows(changed)}
+              </div>
+            </div>'''
+
         return f'''
         <section style="margin:18px 0 0 0;background:#f8fafc;border:1px solid #d7e3da;border-radius:12px;padding:14px 16px;">
-          <h2 style="font-size:16px;color:#0f172a;margin:0 0 8px 0;">Changes</h2>
-          <ul style="padding-left:18px;margin:0;color:#334155;font-size:13px;line-height:1.5;">{items}</ul>
+          <h2 style="font-size:17px;color:#0f172a;margin:0;">Changes Summary</h2>
+          <div style="font-size:13px;color:#64748b;line-height:1.45;margin-top:4px;">Grouped by list, then by change type. Green chips are new values; gray chips are previous values.</div>
+          {section('monthly', 'Monthly Picks')}
+          {section('weekly', 'Weekly Picks')}
         </section>'''
 
     monthly = data.get('monthly', {})
