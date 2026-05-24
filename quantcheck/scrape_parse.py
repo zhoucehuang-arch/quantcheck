@@ -35,6 +35,9 @@ HEADER_ALIASES = {
     "ticker": "symbol",
     "held_since": "held_since",
     "holding_since": "held_since",
+    "price": "current_price",
+    "current_price": "current_price",
+    "last_price": "current_price",
     "return": "return",
     "portfolio_return": "return",
     "sector": "sector",
@@ -61,6 +64,9 @@ def extract_pick_date(text: str, mode: str) -> str:
         if match:
             return match.group(0)
     else:
+        match = re.search(rf"\bWeek\s+of\s+(?:{MONTHS})\s+\d{{1,2}},\s+\d{{4}}\b", clean, re.I)
+        if match:
+            return match.group(0)
         match = re.search(r"\b\d{2}/\d{2}/\d{2}\b", clean)
         if match:
             return match.group(0)

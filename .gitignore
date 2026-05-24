@@ -8,6 +8,7 @@ output/
 screenshots/
 logs/
 .config/
+.tmp-live/
 notify_recipients.txt
 *.xlsx
 *.png
