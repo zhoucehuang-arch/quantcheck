@@ -117,12 +117,27 @@ def diff(old, new):
     return lines
 
 
-def send_email(subject, body):
+def screenshot_attachments(snapshot: dict) -> list[Path]:
+    screenshots = snapshot.get('screenshots') or {}
+    out: list[Path] = []
+    for key in ['dashboard', 'monthly', 'weekly']:
+        value = screenshots.get(key)
+        if not value:
+            continue
+        path = Path(value)
+        if not path.is_absolute():
+            path = ROOT / path
+        if path.exists() and path.is_file():
+            out.append(path)
+    return out
+
+
+def send_email(subject, body, attachments=None):
     env = load_env(ROOT)
     recipients = recipients_for_route(EmailRoute.ADMIN, env)
     if not recipients:
         return
-    deliver_email(subject, body, to=recipients)
+    deliver_email(subject, body, to=recipients, attachments=attachments or [])
 
 
 def main():
@@ -132,9 +147,7 @@ def main():
     changes = diff(old, new)
     if not changes:
         return
-    screenshot = None
-    if new.get('screenshots', {}).get('dashboard'):
-        screenshot = new['screenshots']['dashboard']
+    attachments = screenshot_attachments(new)
     body = '\n'.join([
         'Quant GT Website / Function Update',
         f'Detected: {datetime.now(timezone.utc).isoformat()}',
@@ -144,10 +157,10 @@ def main():
         '',
         'Action: review whether selectors, navigation, or report fields need updating.',
     ])
-    if screenshot:
-        body += f'\nMEDIA:{screenshot}'
-    atomic_write_json(LAST_NOTE, {'subject':'Quant GT Website Update Detected','body':body,'at':datetime.now(timezone.utc).isoformat(),'changes':changes})
-    send_email('Quant GT Website Update Detected', body)
+    if attachments:
+        body += '\n\nAttachments:\n' + '\n'.join(f'- {p.name}' for p in attachments)
+    atomic_write_json(LAST_NOTE, {'subject':'Quant GT Website Update Detected','body':body,'at':datetime.now(timezone.utc).isoformat(),'changes':changes,'attachments':[str(p) for p in attachments]})
+    send_email('Quant GT Website Update Detected', body, attachments=attachments)
     print('Quant GT Website Update Detected')
     print(body)
 

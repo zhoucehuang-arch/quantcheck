@@ -1,6 +1,6 @@
 import unittest
 
-from quantcheck.site_diff_notify import diff
+from quantcheck.site_diff_notify import diff, screenshot_attachments
 
 
 class SiteDiffTests(unittest.TestCase):
@@ -25,6 +25,19 @@ class SiteDiffTests(unittest.TestCase):
         }
 
         self.assertEqual(diff(old, new), [])
+
+
+    def test_existing_screenshots_become_email_attachments(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dash = Path(tmp) / "dashboard.png"
+            missing = Path(tmp) / "missing.png"
+            dash.write_bytes(b"png")
+            snapshot = {"screenshots": {"dashboard": str(dash), "weekly": str(missing)}}
+
+            self.assertEqual(screenshot_attachments(snapshot), [dash])
 
 
 if __name__ == "__main__":
