@@ -10,7 +10,8 @@ from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
 from quantcheck.config import load_env
-from quantcheck.gmail_api_notify import parse_recipients, send_email as deliver_email
+from quantcheck.gmail_api_notify import send_email as deliver_email
+from quantcheck.notify_routes import EmailRoute, recipients_for_route, route_label
 from quantcheck.state import atomic_write_json
 
 ROOT = Path(os.environ.get('QUANTCHECK_HOME', Path(__file__).resolve().parents[1]))
@@ -74,12 +75,12 @@ def expected_windows_passed(dt_ny: datetime):
 
 def send_email(subject: str, body: str):
     env = load_env(ROOT)
-    recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'), file_path=env.get('NOTIFY_EMAIL_FILE'))
+    recipients = recipients_for_route(EmailRoute.ADMIN, env)
     if not recipients:
-        log(f'email skipped: NOTIFY_EMAIL_TO is not configured for {subject}')
+        log(f'email skipped: {route_label(EmailRoute.ADMIN)} not configured for {subject}')
         return
     if deliver_email(subject, body, to=recipients):
-        log(f'email sent to {", ".join(recipients)}: {subject}')
+        log(f'email sent via {EmailRoute.ADMIN.value} to {", ".join(recipients)}: {subject}')
     else:
         log(f'email send failed or no sender configured: {subject}')
 

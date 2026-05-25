@@ -39,7 +39,8 @@ Edit `.env`:
 ```env
 QUANTGT_EMAIL=your_quantgt_email
 QUANTGT_PASSWORD=your_quantgt_password
-NOTIFY_EMAIL_TO=recipient@example.com
+NOTIFY_EMAIL_TO=friend@example.com
+NOTIFY_ADMIN_EMAIL_TO=admin@example.com
 
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
@@ -104,5 +105,6 @@ These paths are ignored by git.
 ## Safety Notes
 
 - Never commit `.env`, `.config/`, `browser-profile/`, reports, screenshots, logs, or raw state.
+- Friends in `NOTIFY_EMAIL_TO` only receive successful picks-update reports; admin recipients receive all operator mail.
 - Failed or partial scrapes must not overwrite `state/latest_picks.json`.
 - No notification should be sent on no-change runs.

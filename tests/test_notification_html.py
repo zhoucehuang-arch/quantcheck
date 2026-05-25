@@ -1,5 +1,13 @@
 import unittest
+import sys
+import types
 
+sys.modules.setdefault("pandas_market_calendars", types.SimpleNamespace())
+sys.modules.setdefault("playwright", types.ModuleType("playwright"))
+sys.modules.setdefault(
+    "playwright.sync_api",
+    types.SimpleNamespace(sync_playwright=lambda: None, TimeoutError=TimeoutError),
+)
 from quantcheck.picks_check import build_notification_html
 
 

@@ -31,8 +31,9 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from quantcheck.config import load_env as load_dotenv
 from quantcheck.diff import compare
 from quantcheck import picks_report as report
-from quantcheck.gmail_api_notify import parse_recipients, send_email as deliver_email
 from quantcheck.notify_dedupe import should_send_notification
+from quantcheck.gmail_api_notify import send_email as deliver_email
+from quantcheck.notify_routes import EmailRoute, recipients_for_route, route_label
 from quantcheck.state import atomic_write_json, prune_old_files as prune_files
 from quantcheck.validation import validate_member_picks_data
 
@@ -408,23 +409,36 @@ def send_telegram(text: str, media: List[Path] | None = None):
     return
 
 
-def send_email(subject: str, body: str, attachments: List[Path] | None = None, html_body: str | None = None):
+def send_email(
+    subject: str,
+    body: str,
+    attachments: List[Path] | None = None,
+    html_body: str | None = None,
+    route: EmailRoute = EmailRoute.PICKS_UPDATE,
+):
     env = load_env()
-    recipients = parse_recipients(env.get('NOTIFY_EMAIL_TO'), file_path=env.get('NOTIFY_EMAIL_FILE'))
+    recipients = recipients_for_route(route, env)
     if not recipients:
-        log(f'email skipped: NOTIFY_EMAIL_TO is not configured for {subject}')
+        log(f'email skipped: {route_label(route)} not configured for {subject}')
         return
     if deliver_email(subject, body, to=recipients, attachments=attachments or [], html=html_body):
-        log(f'email sent to {", ".join(recipients)}: {subject}')
+        log(f'email sent via {route.value} to {", ".join(recipients)}: {subject}')
     else:
         log(f'email send failed or no sender configured: {subject}')
 
 
-def notify(subject: str, body: str, media: List[Path] | None = None, html_body: str | None = None, telegram_body: str | None = None):
+def notify(
+    subject: str,
+    body: str,
+    media: List[Path] | None = None,
+    html_body: str | None = None,
+    telegram_body: str | None = None,
+    route: EmailRoute = EmailRoute.PICKS_UPDATE,
+):
     # Standalone mode sends email directly and records a local notification marker.
     # The script stays quiet on no-change runs; change/test runs print a concise
     # summary so service logs remain auditable.
-    send_email(subject, body, media, html_body=html_body)
+    send_email(subject, body, media, html_body=html_body, route=route)
     tg = telegram_body or body
     note = {'subject': subject, 'body': tg, 'email_body': body, 'media': [str(p) for p in media or [] if p.exists()], 'at': now_utc()}
     json_dump(STATE / 'last_notification.json', note)
@@ -616,7 +630,7 @@ def run_check(force=False, no_random=False):
         write_health(last_run_at=now_utc(), last_error=str(e), consecutive_failures=failures, last_window=window or 'forced')
         subject = 'Quant GT Monitor Failed' if failures < 3 else f'Quant GT Monitor Consecutive Failures ({failures})'
         body = f'Window: {window or "forced"}\nError: {e}\nConsecutive failures: {failures}\n\n{tb[-2000:]}'
-        notify(subject, body, [failure_shot] if failure_shot else [])
+        notify(subject, body, [failure_shot] if failure_shot else [], route=EmailRoute.ADMIN)
         raise
 
 
@@ -640,7 +654,14 @@ def main():
         body = build_notification_body(data, None, context='manual full-flow test')
         html_body = build_notification_html(data, None, context='manual full-flow test')
         media = [excel] + list(shots.values())
-        notify('Quant GT Monitor Test: Full Flow Report + Screenshots', body, media, html_body=html_body, telegram_body=tg_body)
+        notify(
+            'Quant GT Monitor Test: Full Flow Report + Screenshots',
+            body,
+            media,
+            html_body=html_body,
+            telegram_body=tg_body,
+            route=EmailRoute.ADMIN,
+        )
         print(json.dumps({'status': 'test_notification_sent', 'excel': str(excel), 'raw': str(raw_path), 'screenshots': {k: str(v) for k, v in shots.items()}}, ensure_ascii=False, indent=2))
         return
     if args.mode == 'baseline':

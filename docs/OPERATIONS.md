@@ -20,9 +20,15 @@ Required:
 QUANTGT_EMAIL=your_quantgt_email
 QUANTGT_PASSWORD=your_quantgt_password
 NOTIFY_EMAIL_FILE=notify_recipients.txt
+NOTIFY_ADMIN_EMAIL_FILE=notify_admin_recipients.txt
 ```
 
-Create the recipient list file, one address per line. Commas and semicolons are also accepted, and `#` starts a comment:
+Recipient routing is intentionally split:
+
+- `NOTIFY_EMAIL_TO` / `NOTIFY_EMAIL_FILE`: subscribers. They only receive successful `Quant GT Picks Updated` reports.
+- `NOTIFY_ADMIN_EMAIL_TO` / `NOTIFY_ADMIN_EMAIL_FILE`: admins. They receive all operator mail, including picks updates, scrape failures, health alerts, site/function changes, and full-flow test emails.
+
+Create recipient list files with one address per line. Commas and semicolons are also accepted, and `#` starts a comment:
 
 ```text
 recipient@example.com
@@ -34,7 +40,10 @@ For quick one-off setups, inline recipients are still supported and are merged w
 
 ```env
 NOTIFY_EMAIL_TO=recipient@example.com,second@example.com
+NOTIFY_ADMIN_EMAIL_TO=admin@example.com
 ```
+
+Do not put friends or subscriber-only readers in the admin recipient list; admin mail can include tracebacks and site-change diagnostics. If admin recipients are not configured, operator alerts are logged but are not sent to subscribers.
 
 SMTP:
 
@@ -150,7 +159,8 @@ Login fails or picks table is empty:
 
 No email arrives:
 
-- Check `NOTIFY_EMAIL_FILE` or `NOTIFY_EMAIL_TO`.
+- For picks-update reports, check `NOTIFY_EMAIL_FILE` / `NOTIFY_EMAIL_TO` and `NOTIFY_ADMIN_EMAIL_FILE` / `NOTIFY_ADMIN_EMAIL_TO`.
+- For failures, health alerts, website changes, and test emails, check `NOTIFY_ADMIN_EMAIL_FILE` or `NOTIFY_ADMIN_EMAIL_TO`.
 - Check `logs/quantcheck_email.log`.
 - For Gmail API, confirm the token exists at `GMAIL_API_TOKEN` and has the `gmail.send` scope.
 - For SMTP, confirm app-password requirements and TLS/STARTTLS settings.
