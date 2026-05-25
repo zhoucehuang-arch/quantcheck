@@ -26,7 +26,9 @@ def _unique(recipients: Iterable[str]) -> List[str]:
 
 
 def _setting(env: Mapping[str, str], key: str) -> str:
-    return str(env.get(key) or os.environ.get(key) or "")
+    if key in env:
+        return str(env.get(key) or "")
+    return str(os.environ.get(key) or "")
 
 
 def subscriber_recipients(env: Mapping[str, str]) -> List[str]:

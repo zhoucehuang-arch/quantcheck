@@ -17,3 +17,5 @@ notify_recipients.txt
 *.webp
 *.log
 .DS_Store
+notify_admin_recipients.txt
+*.egg-info/
