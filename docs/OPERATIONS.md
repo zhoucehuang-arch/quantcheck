@@ -26,7 +26,7 @@ NOTIFY_ADMIN_EMAIL_FILE=notify_admin_recipients.txt
 Recipient routing is intentionally split:
 
 - `NOTIFY_EMAIL_TO` / `NOTIFY_EMAIL_FILE`: subscribers. They only receive successful `Quant GT Picks Updated` reports.
-- `NOTIFY_ADMIN_EMAIL_TO` / `NOTIFY_ADMIN_EMAIL_FILE`: admins. They receive all operator mail, including picks updates, scrape failures, health alerts, site/function changes, and full-flow test emails.
+- `NOTIFY_ADMIN_EMAIL_TO` / `NOTIFY_ADMIN_EMAIL_FILE`: admins. They receive all operator mail, including picks updates, scrape failures, health alerts, site/function changes, official-mail check/forward failures, and full-flow test emails.
 
 Create recipient list files with one address per line. Commas and semicolons are also accepted, and `#` starts a comment:
 
@@ -83,7 +83,7 @@ OFFICIAL_MAIL_IMAP_MAILBOX=INBOX
 OFFICIAL_MAIL_IMAP_SEARCH=UNSEEN
 ```
 
-Manually configure the Quant GT subscription mailbox to forward official emails into this IMAP inbox, then set `OFFICIAL_MAIL_ENABLED=1`. Quantcheck detects matching official mail, deduplicates it in `state/official_mail_forwarder_state.json`, and forwards it to picks-update recipients: subscribers plus admins. Operator-only mail routing is unchanged.
+Manually configure the Quant GT subscription mailbox to forward official emails into this IMAP inbox, then set `OFFICIAL_MAIL_ENABLED=1`. Quantcheck detects matching official mail, deduplicates it in `state/official_mail_forwarder_state.json`, and forwards it to picks-update recipients: subscribers plus admins. IMAP/check/redistribution failures go to admins only. Operator-only mail routing is unchanged.
 
 Optional filters:
 

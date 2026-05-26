@@ -8,6 +8,7 @@ from quantcheck.official_mail_forwarder import (
     OfficialMail,
     build_forward_body,
     forward_official_mail,
+    main,
     matches_official_mail,
     official_mail_from_message,
     split_patterns,
@@ -141,6 +142,74 @@ class OfficialMailForwarderTests(unittest.TestCase):
         self.assertEqual(second["forwarded"], 0)
         deliver.assert_called_once()
         self.assertEqual(deliver.call_args.kwargs["to"], ["friend@example.com", "admin@example.com"])
+
+    def test_send_failure_alert_goes_only_to_admins(self):
+        msg = EmailMessage()
+        msg["From"] = "Quant GT <support@quantgt.io>"
+        msg["Subject"] = "Monthly Picks Updated"
+        msg["Date"] = "Mon, 25 May 2026 08:00:00 +0000"
+        msg.set_content("New monthly picks are available.")
+
+        class FakeImap:
+            def select(self, mailbox, readonly=True):
+                return "OK", []
+
+            def uid(self, command, *args):
+                if command == "search":
+                    return "OK", [b"1"]
+                if command == "fetch":
+                    return "OK", [(b"1 (RFC822 {1}", msg.as_bytes())]
+                raise AssertionError(command)
+
+            def logout(self):
+                return "OK", []
+
+        env = {
+            "OFFICIAL_MAIL_ENABLED": "1",
+            "NOTIFY_EMAIL_TO": "friend@example.com",
+            "NOTIFY_EMAIL_FILE": "",
+            "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
+            "NOTIFY_ADMIN_EMAIL_FILE": "",
+            "OFFICIAL_MAIL_IMAP_HOST": "imap.example.com",
+            "OFFICIAL_MAIL_IMAP_USERNAME": "receiver@example.com",
+            "OFFICIAL_MAIL_IMAP_PASSWORD": "secret",
+        }
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("quantcheck.official_mail_forwarder.load_env"),
+            patch("quantcheck.official_mail_forwarder.connect_imap", return_value=FakeImap()),
+            patch("quantcheck.official_mail_forwarder.deliver_email", side_effect=[False, True]) as deliver,
+            patch("sys.argv", ["quantcheck-official-mail"]),
+        ):
+            main()
+
+        self.assertEqual(deliver.call_count, 2)
+        self.assertEqual(deliver.call_args_list[0].kwargs["to"], ["friend@example.com", "admin@example.com"])
+        self.assertEqual(deliver.call_args_list[1].kwargs["to"], ["admin@example.com"])
+
+    def test_check_failure_alert_goes_only_to_admins(self):
+        env = {
+            "OFFICIAL_MAIL_ENABLED": "1",
+            "NOTIFY_EMAIL_TO": "friend@example.com",
+            "NOTIFY_EMAIL_FILE": "",
+            "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
+            "NOTIFY_ADMIN_EMAIL_FILE": "",
+            "OFFICIAL_MAIL_IMAP_HOST": "imap.example.com",
+            "OFFICIAL_MAIL_IMAP_USERNAME": "receiver@example.com",
+            "OFFICIAL_MAIL_IMAP_PASSWORD": "secret",
+        }
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("quantcheck.official_mail_forwarder.load_env"),
+            patch("quantcheck.official_mail_forwarder.connect_imap", side_effect=RuntimeError("imap down")),
+            patch("quantcheck.official_mail_forwarder.deliver_email", return_value=True) as deliver,
+            patch("sys.argv", ["quantcheck-official-mail"]),
+        ):
+            with self.assertRaises(RuntimeError):
+                main()
+
+        deliver.assert_called_once()
+        self.assertEqual(deliver.call_args.kwargs["to"], ["admin@example.com"])
 
 
 if __name__ == "__main__":

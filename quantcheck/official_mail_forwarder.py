@@ -9,6 +9,7 @@ import imaplib
 import json
 import os
 import re
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.header import decode_header
@@ -180,6 +181,35 @@ def build_forward_body(mail: OfficialMail) -> tuple[str, str, str | None]:
     return subject, body, html
 
 
+def send_admin_alert(env: Mapping[str, str], subject: str, body: str) -> bool:
+    recipients = recipients_for_route(EmailRoute.ADMIN, env)
+    if not recipients:
+        log(f"admin alert skipped: {route_label(EmailRoute.ADMIN)} not configured for {subject}")
+        return False
+    sent = deliver_email(subject, body, to=recipients)
+    if sent:
+        log(f"admin alert sent to {', '.join(recipients)}: {subject}")
+    else:
+        log(f"admin alert send failed: {subject}")
+    return sent
+
+
+def alert_forward_failures(env: Mapping[str, str], result: Mapping[str, object]) -> bool:
+    failed = int(result.get("failed") or 0)
+    if failed <= 0:
+        return False
+    body = "\n".join([
+        "Official Quant GT email was detected, but redistribution failed.",
+        f"Checked: {result.get('checked', 0)}",
+        f"Matched: {result.get('matched', 0)}",
+        f"Forwarded: {result.get('forwarded', 0)}",
+        f"Failed: {failed}",
+        "",
+        f"Log: {LOG_FILE}",
+    ])
+    return send_admin_alert(env, "Quant GT Official Mail Forward Failed", body)
+
+
 def connect_imap(env: Mapping[str, str]):
     host = env.get("OFFICIAL_MAIL_IMAP_HOST") or env.get("IMAP_HOST")
     username = env.get("OFFICIAL_MAIL_IMAP_USERNAME") or env.get("IMAP_USERNAME")
@@ -279,12 +309,22 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="check and match messages without sending")
     args = parser.parse_args()
-    env = load_env(ROOT)
+    load_env(ROOT)
+    env = dict(os.environ)
     try:
         result = forward_official_mail(env, dry_run=args.dry_run)
+        if not args.dry_run:
+            alert_forward_failures(env, result)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as exc:
-        log(f"official mail forward failed: {exc}")
+        tb = traceback.format_exc()
+        log(f"official mail forward failed: {exc}\n{tb}")
+        if env.get("OFFICIAL_MAIL_ENABLED", "0") == "1":
+            send_admin_alert(
+                env,
+                "Quant GT Official Mail Check Failed",
+                f"Error: {exc}\n\n{tb[-3000:]}",
+            )
         raise
 
 
