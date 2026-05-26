@@ -8,6 +8,7 @@ from quantcheck.official_mail_forwarder import (
     OfficialMail,
     build_forward_body,
     forward_official_mail,
+    gmail_messages_to_official_mails,
     main,
     matches_official_mail,
     official_mail_from_message,
@@ -96,6 +97,82 @@ class OfficialMailForwarderTests(unittest.TestCase):
 
         self.assertEqual(result["skipped"], "disabled")
         connect_imap.assert_not_called()
+
+    def test_gmail_messages_are_converted_to_official_mails(self):
+        messages = [{
+            "id": "abc123",
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "Quant GT <support@quantgt.io>"},
+                    {"name": "Subject", "value": "Monthly Picks Updated"},
+                    {"name": "Date", "value": "Mon, 25 May 2026 08:00:00 +0000"},
+                ],
+                "parts": [
+                    {"mimeType": "text/plain", "body": {"data": "TmV3IHBpY2tzIGFyZSBhdmFpbGFibGUu"}},
+                    {"mimeType": "text/html", "body": {"data": "PHA-TmV3IHBpY2tzIGFyZSBhdmFpbGFibGUuPC9wPg"}},
+                ],
+            },
+        }]
+
+        mails = gmail_messages_to_official_mails(messages)
+
+        self.assertEqual(len(mails), 1)
+        self.assertEqual(mails[0].uid, "abc123")
+        self.assertEqual(mails[0].subject, "Monthly Picks Updated")
+        self.assertIn("support@quantgt.io", mails[0].from_header)
+        self.assertIn("New picks are available.", mails[0].text)
+        self.assertIn("<p>New picks are available.</p>", mails[0].html)
+
+    def test_gmail_api_forwarder_sends_once_and_marks_message_read(self):
+        gmail_message = {
+            "id": "msg-1",
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "QQ Mail <897714549@qq.com>"},
+                    {"name": "Subject", "value": "Fwd: Monthly Picks Updated"},
+                    {"name": "Date", "value": "Mon, 25 May 2026 08:00:00 +0000"},
+                ],
+                "body": {"data": "RnJvbTogUXVhbnQgR1QgPHN1cHBvcnRAcXVhbnRndC5pbz5cblN1YmplY3Q6IE1vbnRobHkgUGlja3MgVXBkYXRlZA"},
+            },
+        }
+        listed = []
+        marked = []
+
+        def fake_list(env, query, max_messages):
+            listed.append((query, max_messages))
+            return [gmail_message]
+
+        def fake_mark(env, message_id):
+            marked.append(message_id)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "official_mail_forwarder_state.json"
+            env = {
+                "OFFICIAL_MAIL_ENABLED": "1",
+                "OFFICIAL_MAIL_PROVIDER": "gmail_api",
+                "OFFICIAL_MAIL_GMAIL_QUERY": "is:unread newer_than:14d quantgt",
+                "OFFICIAL_MAIL_MARK_READ": "1",
+                "OFFICIAL_MAIL_MAX_MESSAGES": "7",
+                "NOTIFY_EMAIL_TO": "friend@example.com",
+                "NOTIFY_EMAIL_FILE": "",
+                "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
+                "NOTIFY_ADMIN_EMAIL_FILE": "",
+            }
+            with (
+                patch("quantcheck.official_mail_forwarder.STATE_FILE", state_file),
+                patch("quantcheck.official_mail_forwarder.list_gmail_messages", side_effect=fake_list),
+                patch("quantcheck.official_mail_forwarder.mark_gmail_message_read", side_effect=fake_mark),
+                patch("quantcheck.official_mail_forwarder.deliver_email", return_value=True) as deliver,
+            ):
+                first = forward_official_mail(env)
+                second = forward_official_mail(env)
+
+        self.assertEqual(first["forwarded"], 1)
+        self.assertEqual(second["forwarded"], 0)
+        self.assertEqual(listed[0], ("is:unread newer_than:14d quantgt", 7))
+        self.assertEqual(marked, ["msg-1"])
+        deliver.assert_called_once()
+        self.assertEqual(deliver.call_args.kwargs["to"], ["friend@example.com", "admin@example.com"])
 
     def test_forwarder_sends_once_and_records_state(self):
         msg = EmailMessage()

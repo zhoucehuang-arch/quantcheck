@@ -8,7 +8,7 @@ It replaces a Hermes CronJob-style scheduler with a small self-contained Python 
 
 - Logged-in Quant GT scraping with Playwright.
 - Monthly and Weekly Picks reports as Excel files.
-- Optional forwarding of official Quant GT update emails from an IMAP inbox.
+- Optional forwarding of official Quant GT update emails from a Gmail API mailbox or legacy IMAP inbox.
 - Screenshot capture for changed pages.
 - Diff logic that ignores market-noise fields such as price, return, market cap, and P/E.
 - Guards against logged-out demo data and partial row-detail captures.

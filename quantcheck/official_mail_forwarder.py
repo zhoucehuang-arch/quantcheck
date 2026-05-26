@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import email
 import hashlib
 import html as html_lib
@@ -31,6 +32,7 @@ STATE_FILE = STATE / "official_mail_forwarder_state.json"
 
 DEFAULT_SENDER_PATTERNS = ["@quantgt.io", "quant gt", "quantgt"]
 DEFAULT_SUBJECT_PATTERNS = ["quant gt", "quantgt", "picks", "holdings", "portfolio"]
+DEFAULT_GMAIL_QUERY = "is:unread newer_than:14d (quantgt OR \"quant gt\" OR quantgt.io)"
 
 STATE.mkdir(parents=True, exist_ok=True)
 LOGS.mkdir(parents=True, exist_ok=True)
@@ -116,6 +118,63 @@ def official_mail_from_message(uid: str, raw_message: bytes) -> OfficialMail:
         text=text,
         html=html,
     )
+
+
+def _urlsafe_b64decode(data: str | None) -> str:
+    if not data:
+        return ""
+    raw = data.encode("ascii")
+    raw += b"=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode(raw).decode("utf-8", errors="replace")
+
+
+def _gmail_headers(message: Mapping) -> dict[str, str]:
+    headers = {}
+    for item in (message.get("payload") or {}).get("headers") or []:
+        name = str(item.get("name") or "").lower()
+        if name:
+            headers[name] = str(item.get("value") or "")
+    return headers
+
+
+def _walk_gmail_parts(payload: Mapping):
+    yield payload
+    for part in payload.get("parts") or []:
+        yield from _walk_gmail_parts(part)
+
+
+def gmail_message_to_official_mail(message: Mapping) -> OfficialMail:
+    payload = message.get("payload") or {}
+    headers = _gmail_headers(message)
+    plain_parts: list[str] = []
+    html_parts: list[str] = []
+    for part in _walk_gmail_parts(payload):
+        mime_type = str(part.get("mimeType") or "")
+        body = part.get("body") or {}
+        data = body.get("data")
+        if not data:
+            continue
+        decoded = _urlsafe_b64decode(data)
+        if mime_type == "text/html":
+            html_parts.append(decoded)
+        elif mime_type == "text/plain" or not mime_type:
+            plain_parts.append(decoded)
+    html = "\n".join(html_parts).strip()
+    text = "\n".join(plain_parts).strip()
+    if not text and html:
+        text = plain_text_from_html(html)
+    return OfficialMail(
+        uid=str(message.get("id") or ""),
+        subject=decode_header_value(headers.get("subject")),
+        from_header=decode_header_value(headers.get("from")),
+        date=decode_header_value(headers.get("date")),
+        text=text,
+        html=html,
+    )
+
+
+def gmail_messages_to_official_mails(messages: Iterable[Mapping]) -> list[OfficialMail]:
+    return [gmail_message_to_official_mail(message) for message in messages]
 
 
 def address_text(from_header: str) -> str:
@@ -210,6 +269,52 @@ def alert_forward_failures(env: Mapping[str, str], result: Mapping[str, object])
     return send_admin_alert(env, "Quant GT Official Mail Forward Failed", body)
 
 
+def gmail_scopes(env: Mapping[str, str]) -> list[str]:
+    raw = env.get("OFFICIAL_MAIL_GMAIL_SCOPES") or env.get("GMAIL_API_SCOPES")
+    if raw:
+        return [item.strip() for item in re.split(r"[,;\s]+", raw) if item.strip()]
+    return ["https://www.googleapis.com/auth/gmail.modify"]
+
+
+def gmail_service(env: Mapping[str, str]):
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+    except Exception as exc:
+        raise RuntimeError("google client libraries are required for Gmail API official mail forwarding") from exc
+    token_value = env.get("OFFICIAL_MAIL_GMAIL_TOKEN") or env.get("GMAIL_API_TOKEN")
+    token_path = Path(token_value) if token_value else ROOT / ".config" / "gmail-api" / "token.json"
+    if not token_path.is_absolute():
+        token_path = ROOT / token_path
+    if not token_path.exists():
+        raise RuntimeError(f"missing Gmail API token: {token_path}")
+    scopes = gmail_scopes(env)
+    creds = Credentials.from_authorized_user_file(str(token_path), scopes)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        token_path.write_text(creds.to_json(), encoding="utf-8")
+    if not creds.valid:
+        raise RuntimeError("Gmail API credentials are not valid")
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def list_gmail_messages(env: Mapping[str, str], query: str, max_messages: int) -> list[dict]:
+    svc = gmail_service(env)
+    response = svc.users().messages().list(userId="me", q=query, maxResults=max_messages).execute()
+    out = []
+    for item in response.get("messages") or []:
+        msg = svc.users().messages().get(userId="me", id=item["id"], format="full").execute()
+        out.append(msg)
+    return out
+
+
+def mark_gmail_message_read(env: Mapping[str, str], message_id: str) -> None:
+    svc = gmail_service(env)
+    svc.users().messages().modify(userId="me", id=message_id, body={"removeLabelIds": ["UNREAD"]}).execute()
+
+
+
 def connect_imap(env: Mapping[str, str]):
     host = env.get("OFFICIAL_MAIL_IMAP_HOST") or env.get("IMAP_HOST")
     username = env.get("OFFICIAL_MAIL_IMAP_USERNAME") or env.get("IMAP_USERNAME")
@@ -246,6 +351,67 @@ def search_query(env: Mapping[str, str]) -> str:
     return env.get("OFFICIAL_MAIL_IMAP_SEARCH") or "UNSEEN"
 
 
+def _record_forward(state: dict, forwarded: set[str], fingerprint: str, mail: OfficialMail, provider: str) -> None:
+    forwarded.add(fingerprint)
+    state.setdefault("history", []).append({
+        "uid": mail.uid,
+        "subject": mail.subject,
+        "from": mail.from_header,
+        "date": mail.date,
+        "provider": provider,
+        "fingerprint": fingerprint,
+        "forwarded_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def _forward_mails(mails: Iterable[OfficialMail], env: Mapping[str, str], recipients: list[str], sender_patterns: list[str], subject_patterns: list[str], state: dict, forwarded: set[str], result: dict, *, provider: str, dry_run: bool) -> None:
+    for mail in mails:
+        result["checked"] += 1
+        if not matches_official_mail(mail, sender_patterns, subject_patterns):
+            continue
+        result["matched"] += 1
+        fingerprint = mail_fingerprint(mail)
+        if fingerprint in forwarded:
+            continue
+        subject, body, html = build_forward_body(mail)
+        if not dry_run:
+            sent = deliver_email(subject, body, to=recipients, html=html)
+            if not sent:
+                result["failed"] += 1
+                log(f"official mail send failed provider={provider} uid={mail.uid} subject={mail.subject!r}")
+                continue
+            _record_forward(state, forwarded, fingerprint, mail, provider)
+        result["forwarded"] += 1
+        result.setdefault("_forwarded_uids", []).append(mail.uid)
+        log(f"forwarded official mail provider={provider} uid={mail.uid} subject={mail.subject!r} to={', '.join(recipients)}")
+
+
+def _forward_from_gmail_api(env: Mapping[str, str], recipients: list[str], sender_patterns: list[str], subject_patterns: list[str], state: dict, forwarded: set[str], result: dict, *, dry_run: bool) -> None:
+    max_messages = int(env.get("OFFICIAL_MAIL_MAX_MESSAGES") or "20")
+    query = env.get("OFFICIAL_MAIL_GMAIL_QUERY") or DEFAULT_GMAIL_QUERY
+    messages = list_gmail_messages(env, query, max_messages)
+    mails = gmail_messages_to_official_mails(messages)
+    _forward_mails(mails, env, recipients, sender_patterns, subject_patterns, state, forwarded, result, provider="gmail_api", dry_run=dry_run)
+    if not dry_run and env.get("OFFICIAL_MAIL_MARK_READ", "1") != "0":
+        for message_id in result.get("_forwarded_uids") or []:
+            mark_gmail_message_read(env, message_id)
+
+
+def _forward_from_imap(env: Mapping[str, str], recipients: list[str], sender_patterns: list[str], subject_patterns: list[str], state: dict, forwarded: set[str], result: dict, *, dry_run: bool) -> None:
+    mailbox = env.get("OFFICIAL_MAIL_IMAP_MAILBOX") or "INBOX"
+    max_messages = int(env.get("OFFICIAL_MAIL_MAX_MESSAGES") or "20")
+    client = connect_imap(env)
+    try:
+        uids = search_uids(client, mailbox, search_query(env))[-max_messages:]
+        mails = [official_mail_from_message(uid, fetch_message(client, uid)) for uid in uids]
+        _forward_mails(mails, env, recipients, sender_patterns, subject_patterns, state, forwarded, result, provider="imap", dry_run=dry_run)
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
 def forward_official_mail(env: Mapping[str, str], *, dry_run: bool = False) -> dict:
     if env.get("OFFICIAL_MAIL_ENABLED", "0") != "1":
         log("official mail forward skipped: OFFICIAL_MAIL_ENABLED is not 1")
@@ -258,51 +424,23 @@ def forward_official_mail(env: Mapping[str, str], *, dry_run: bool = False) -> d
 
     sender_patterns = split_patterns(env.get("OFFICIAL_MAIL_SENDER_PATTERNS"), DEFAULT_SENDER_PATTERNS)
     subject_patterns = split_patterns(env.get("OFFICIAL_MAIL_SUBJECT_PATTERNS"), DEFAULT_SUBJECT_PATTERNS)
-    mailbox = env.get("OFFICIAL_MAIL_IMAP_MAILBOX") or "INBOX"
-    max_messages = int(env.get("OFFICIAL_MAIL_MAX_MESSAGES") or "20")
+    provider = (env.get("OFFICIAL_MAIL_PROVIDER") or "imap").strip().lower()
     state = load_state()
     forwarded = set(state.get("forwarded") or [])
-    result = {"checked": 0, "matched": 0, "forwarded": 0, "failed": 0, "dry_run": dry_run}
+    result = {"checked": 0, "matched": 0, "forwarded": 0, "failed": 0, "dry_run": dry_run, "provider": provider}
 
-    client = connect_imap(env)
-    try:
-        uids = search_uids(client, mailbox, search_query(env))[-max_messages:]
-        for uid in uids:
-            result["checked"] += 1
-            mail = official_mail_from_message(uid, fetch_message(client, uid))
-            if not matches_official_mail(mail, sender_patterns, subject_patterns):
-                continue
-            result["matched"] += 1
-            fingerprint = mail_fingerprint(mail)
-            if fingerprint in forwarded:
-                continue
-            subject, body, html = build_forward_body(mail)
-            if not dry_run:
-                sent = deliver_email(subject, body, to=recipients, html=html)
-                if not sent:
-                    result["failed"] += 1
-                    log(f"official mail send failed uid={uid} subject={mail.subject!r}")
-                    continue
-                forwarded.add(fingerprint)
-                state.setdefault("history", []).append({
-                    "uid": uid,
-                    "subject": mail.subject,
-                    "from": mail.from_header,
-                    "date": mail.date,
-                    "fingerprint": fingerprint,
-                    "forwarded_at": datetime.now(timezone.utc).isoformat(),
-                })
-            result["forwarded"] += 1
-            log(f"forwarded official mail uid={uid} subject={mail.subject!r} to={', '.join(recipients)}")
-        state["forwarded"] = sorted(forwarded)
-        if not dry_run and result["forwarded"] > 0:
-            save_state(state)
-        return result
-    finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+    if provider == "gmail_api":
+        _forward_from_gmail_api(env, recipients, sender_patterns, subject_patterns, state, forwarded, result, dry_run=dry_run)
+    elif provider == "imap":
+        _forward_from_imap(env, recipients, sender_patterns, subject_patterns, state, forwarded, result, dry_run=dry_run)
+    else:
+        raise RuntimeError(f"unsupported OFFICIAL_MAIL_PROVIDER: {provider}")
+
+    state["forwarded"] = sorted(forwarded)
+    if not dry_run and result["forwarded"] > 0:
+        save_state(state)
+    result.pop("_forwarded_uids", None)
+    return result
 
 
 def main() -> None:
