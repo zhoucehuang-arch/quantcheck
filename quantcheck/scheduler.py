@@ -84,6 +84,11 @@ def run_health_site():
     return max(rc1, rc2 if rc2 != 124 else 0, rc3)
 
 
+def run_official_mail():
+    timeout = int(os.environ.get("QUANTCHECK_MAIL_TIMEOUT_SECONDS", "60"))
+    return run_cmd([sys.executable, "-m", "quantcheck.official_mail_forwarder"], timeout)
+
+
 def run_once(kind: str):
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_FILE.open("w") as lock:
@@ -101,6 +106,8 @@ def run_once(kind: str):
             return run_health_site()
         if kind == "health":
             return run_cmd([sys.executable, "-m", "quantcheck.health_watchdog"], int(os.environ.get("QUANTCHECK_HEALTH_TIMEOUT_SECONDS", "110")))
+        if kind == "official_mail":
+            return run_official_mail()
         raise SystemExit(f"unknown job kind: {kind}")
 
 
@@ -129,7 +136,7 @@ def daemon():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--once", choices=["picks", "health_site", "health"], help="run one job then exit")
+    ap.add_argument("--once", choices=["picks", "health_site", "health", "official_mail"], help="run one job then exit")
     ap.add_argument("--daemon", action="store_true", help="run built-in scheduler loop")
     args = ap.parse_args()
     load_env()

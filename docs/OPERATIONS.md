@@ -71,6 +71,28 @@ The Gmail token only needs this scope:
 https://www.googleapis.com/auth/gmail.send
 ```
 
+Official Quant GT email forwarding:
+
+```env
+OFFICIAL_MAIL_ENABLED=1
+OFFICIAL_MAIL_IMAP_HOST=imap.gmail.com
+OFFICIAL_MAIL_IMAP_PORT=993
+OFFICIAL_MAIL_IMAP_USERNAME=receiver@example.com
+OFFICIAL_MAIL_IMAP_PASSWORD=app_password_or_imap_password
+OFFICIAL_MAIL_IMAP_MAILBOX=INBOX
+OFFICIAL_MAIL_IMAP_SEARCH=UNSEEN
+```
+
+Manually configure the Quant GT subscription mailbox to forward official emails into this IMAP inbox, then set `OFFICIAL_MAIL_ENABLED=1`. Quantcheck detects matching official mail, deduplicates it in `state/official_mail_forwarder_state.json`, and forwards it to picks-update recipients: subscribers plus admins. Operator-only mail routing is unchanged.
+
+Optional filters:
+
+```env
+OFFICIAL_MAIL_SENDER_PATTERNS=@quantgt.io,quant gt,quantgt
+OFFICIAL_MAIL_SUBJECT_PATTERNS=quant gt,quantgt,picks,holdings,portfolio
+OFFICIAL_MAIL_MAX_MESSAGES=20
+```
+
 Recommended permissions:
 
 ```bash
@@ -93,6 +115,7 @@ Then run:
 ```bash
 quantcheck --once picks
 quantcheck --once health_site
+quantcheck --once official_mail
 python -m quantcheck.picks_check --test-email
 ```
 
@@ -125,17 +148,20 @@ Default schedule, all in `America/New_York`:
 - `08:30` picks scan
 - `08:45` health + site scan
 - `09:00` picks scan
+- `09:20` official mail scan
 - `09:40` picks scan
+- `12:00` official mail scan
 - `17:00` picks scan
 - `17:15` health + site scan
+- `17:30` official mail scan
 
 Override with:
 
 ```env
-QUANTCHECK_SCHEDULE=08:30:picks,08:45:health_site,09:00:picks,09:40:picks,17:00:picks,17:15:health_site
+QUANTCHECK_SCHEDULE=08:20:official_mail,08:30:picks,08:45:health_site,09:00:picks,09:20:official_mail,09:40:picks,12:00:official_mail,17:00:picks,17:15:health_site,17:30:official_mail
 ```
 
-Allowed job kinds are `picks`, `health_site`, and `health`.
+Allowed job kinds are `picks`, `health_site`, `health`, and `official_mail`.
 
 ## Runtime Files
 
@@ -143,6 +169,7 @@ Allowed job kinds are `picks`, `health_site`, and `health`.
 - `state/previous_picks.json`: previous valid source state
 - `state/raw/`: raw pick captures for audit
 - `state/site_snapshot_latest.json`: latest site snapshot
+- `state/official_mail_forwarder_state.json`: official email forwarding dedupe state
 - `state/health.json`: monitor health state
 - `output/`: Excel reports
 - `screenshots/`: captured screenshots
@@ -161,6 +188,7 @@ No email arrives:
 
 - For picks-update reports, check `NOTIFY_EMAIL_FILE` / `NOTIFY_EMAIL_TO` and `NOTIFY_ADMIN_EMAIL_FILE` / `NOTIFY_ADMIN_EMAIL_TO`.
 - For failures, health alerts, website changes, and test emails, check `NOTIFY_ADMIN_EMAIL_FILE` or `NOTIFY_ADMIN_EMAIL_TO`.
+- For official email forwarding, check `OFFICIAL_MAIL_IMAP_*` settings and `logs/official_mail_forwarder.log`.
 - Check `logs/quantcheck_email.log`.
 - For Gmail API, confirm the token exists at `GMAIL_API_TOKEN` and has the `gmail.send` scope.
 - For SMTP, confirm app-password requirements and TLS/STARTTLS settings.

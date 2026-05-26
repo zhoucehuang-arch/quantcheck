@@ -15,6 +15,8 @@ quantcheck/
   picks_check.py         pick monitor orchestration
   site_snapshot.py       authenticated site snapshot capture
   site_diff_notify.py    site-change diff and alerting
+  official_mail_forwarder.py
+                         IMAP detection and forwarding of official Quant GT mail
   health_watchdog.py     stale/failure health alerting
   gmail_api_notify.py    SMTP and Gmail API delivery
 scripts/
@@ -41,6 +43,7 @@ Run real-flow checks after changing selectors, login, screenshots, or notificati
 python -m quantcheck.picks_check --mode baseline --force --no-random
 quantcheck --once picks
 quantcheck --once health_site
+quantcheck --once official_mail
 python -m quantcheck.picks_check --test-email
 ```
 
@@ -48,6 +51,7 @@ python -m quantcheck.picks_check --test-email
 
 - `picks_report.py` owns Playwright scraping and Excel formatting.
 - `picks_check.py` orchestrates baseline/check/test-email flows.
+- `official_mail_forwarder.py` forwards matching official Quant GT emails to the same picks-update route as scraper-detected changes.
 - `diff.py` should stay pure and easy to unit test.
 - `validation.py` rejects logged-out demo data and incomplete row-detail captures before state writes.
 - `state.py` should be used for JSON state writes so interrupted runs do not corrupt files.
