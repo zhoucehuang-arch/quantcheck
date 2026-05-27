@@ -21,6 +21,7 @@ from typing import Iterable, List, Mapping
 
 from quantcheck.config import load_env
 from quantcheck.gmail_api_notify import send_email as deliver_email
+from quantcheck.email_templates import build_card_email_html
 from quantcheck.notify_routes import EmailRoute, recipients_for_route, route_label
 from quantcheck.state import atomic_write_json
 
@@ -215,6 +216,10 @@ def save_state(state: dict) -> None:
     atomic_write_json(STATE_FILE, state)
 
 
+def build_card_html(title: str, cards: list[Mapping[str, object]], context: str = "system") -> str:
+    return build_card_email_html(title, cards, context=context)
+
+
 def build_forward_body(mail: OfficialMail) -> tuple[str, str, str | None]:
     subject = f"Quant GT Official Email: {mail.subject or '(no subject)'}"
     body = "\n".join([
@@ -227,16 +232,20 @@ def build_forward_body(mail: OfficialMail) -> tuple[str, str, str | None]:
     ])
     html = None
     if mail.html:
-        html = f"""
-        <div style="font-family:Arial,sans-serif;color:#111827">
-          <p><strong>Forwarded official Quant GT email.</strong></p>
-          <p><strong>From:</strong> {html_lib.escape(mail.from_header)}<br>
-             <strong>Date:</strong> {html_lib.escape(mail.date or 'Unknown')}<br>
-             <strong>Subject:</strong> {html_lib.escape(mail.subject or '(no subject)')}</p>
-          <hr>
-          {mail.html}
-        </div>
-        """
+        html = build_card_html(
+            "Official Email",
+            [
+                {"label": "Status", "value": "Forwarded official Quant GT email."},
+                {"label": "From", "value": mail.from_header},
+                {"label": "Date", "value": mail.date or "Unknown"},
+                {"label": "Subject", "value": mail.subject or "(no subject)"},
+                {"label": "Original HTML", "value": "Included below"},
+            ],
+            context="official email redistributed",
+        ).replace(
+            "</table>",
+            "</table><div style=\"border-top:1px solid #d7e3da;margin-top:8px;padding-top:14px;\">" + mail.html + "</div>",
+        )
     return subject, body, html
 
 
@@ -245,7 +254,15 @@ def send_admin_alert(env: Mapping[str, str], subject: str, body: str) -> bool:
     if not recipients:
         log(f"admin alert skipped: {route_label(EmailRoute.ADMIN)} not configured for {subject}")
         return False
-    sent = deliver_email(subject, body, to=recipients)
+    html = build_card_html(
+        subject.replace("Quant GT ", ""),
+        [
+            {"label": "Route", "value": "administrators only"},
+            {"label": "Message", "value": body, "tone": "error" if "Failed" in subject or "Failure" in subject else "warning"},
+        ],
+        context="official mail monitor alert",
+    )
+    sent = deliver_email(subject, body, to=recipients, html=html)
     if sent:
         log(f"admin alert sent to {', '.join(recipients)}: {subject}")
     else:

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from quantcheck.config import load_env
 from quantcheck.gmail_api_notify import send_email as deliver_email
+from quantcheck.email_templates import build_card_email_html
 from quantcheck.notify_routes import EmailRoute, recipients_for_route
 from quantcheck.state import atomic_write_json
 
@@ -132,12 +133,12 @@ def screenshot_attachments(snapshot: dict) -> list[Path]:
     return out
 
 
-def send_email(subject, body, attachments=None):
+def send_email(subject, body, attachments=None, html=None):
     env = load_env(ROOT)
     recipients = recipients_for_route(EmailRoute.ADMIN, env)
     if not recipients:
         return
-    deliver_email(subject, body, to=recipients, attachments=attachments or [])
+    deliver_email(subject, body, to=recipients, attachments=attachments or [], html=html)
 
 
 def main():
@@ -159,8 +160,18 @@ def main():
     ])
     if attachments:
         body += '\n\nAttachments:\n' + '\n'.join(f'- {p.name}' for p in attachments)
+    html = build_card_email_html(
+        'Website Update Detected',
+        [
+            {'label': 'Detected', 'value': datetime.now(timezone.utc).isoformat()},
+            {'label': 'Changes', 'value': '\n'.join(changes[:30]), 'tone': 'warning'},
+            {'label': 'Attachments', 'value': '\n'.join(p.name for p in attachments) if attachments else 'None'},
+            {'label': 'Action', 'value': 'Review whether selectors, navigation, or report fields need updating.'},
+        ],
+        context='website/function diff monitor',
+    )
     atomic_write_json(LAST_NOTE, {'subject':'Quant GT Website Update Detected','body':body,'at':datetime.now(timezone.utc).isoformat(),'changes':changes,'attachments':[str(p) for p in attachments]})
-    send_email('Quant GT Website Update Detected', body, attachments=attachments)
+    send_email('Quant GT Website Update Detected', body, attachments=attachments, html=html)
     print('Quant GT Website Update Detected')
     print(body)
 

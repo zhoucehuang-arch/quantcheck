@@ -74,7 +74,7 @@ class FetchResilienceTests(unittest.TestCase):
         sent = []
 
         def fake_notify(subject, body, media=None, html_body=None, telegram_body=None, route=EmailRoute.PICKS_UPDATE):
-            sent.append({"subject": subject, "body": body, "route": route, "media": media or []})
+            sent.append({"subject": subject, "body": body, "html_body": html_body, "route": route, "media": media or []})
 
         with patch.object(picks_check, "fetch_current", side_effect=RuntimeError("monthly rows stayed empty after retries")), \
              patch.object(picks_check, "notify", side_effect=fake_notify), \
@@ -88,6 +88,34 @@ class FetchResilienceTests(unittest.TestCase):
         self.assertEqual(sent[0]["route"], EmailRoute.ADMIN)
         self.assertIn("Quant GT Monitor Test Failed", sent[0]["subject"])
         self.assertIn("monthly rows stayed empty", sent[0]["body"])
+        self.assertIsNotNone(sent[0]["html_body"])
+        self.assertIn("Quant GT Monitor", sent[0]["html_body"])
+        self.assertIn("Error", sent[0]["html_body"])
+        self.assertIn("monthly rows stayed empty", sent[0]["html_body"])
+
+    def test_run_check_failure_notifies_admin_with_card_html(self):
+        sent = []
+
+        def fake_notify(subject, body, media=None, html_body=None, telegram_body=None, route=EmailRoute.PICKS_UPDATE):
+            sent.append({"subject": subject, "body": body, "html_body": html_body, "route": route, "media": media or []})
+
+        with patch.object(picks_check, "trading_day", return_value=True), \
+             patch.object(picks_check, "current_window", return_value="premarket_0830"), \
+             patch.object(picks_check, "fetch_current", side_effect=RuntimeError("monthly rows stayed empty after retries")), \
+             patch.object(picks_check, "capture_logged_in_screenshots", return_value={}), \
+             patch.object(picks_check, "notify", side_effect=fake_notify), \
+             patch.object(picks_check, "log"), \
+             patch.object(picks_check, "write_health"), \
+             patch.object(picks_check, "json_load", return_value={}):
+            with self.assertRaises(RuntimeError):
+                picks_check.run_check(force=False, no_random=True)
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["route"], EmailRoute.ADMIN)
+        self.assertIn("Quant GT Monitor Failed", sent[0]["subject"])
+        self.assertIsNotNone(sent[0]["html_body"])
+        self.assertIn("Quant GT Monitor", sent[0]["html_body"])
+        self.assertIn("monthly rows stayed empty", sent[0]["html_body"])
 
 
 if __name__ == "__main__":

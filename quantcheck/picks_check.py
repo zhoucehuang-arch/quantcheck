@@ -33,6 +33,7 @@ from quantcheck.diff import compare
 from quantcheck import picks_report as report
 from quantcheck.notify_dedupe import should_send_notification
 from quantcheck.gmail_api_notify import send_email as deliver_email
+from quantcheck.email_templates import build_card_email_html
 from quantcheck.notify_routes import EmailRoute, recipients_for_route, route_label
 from quantcheck.state import atomic_write_json, prune_old_files as prune_files
 from quantcheck.validation import validate_member_picks_data
@@ -314,6 +315,10 @@ def build_notification_html(data: Dict[str, Any], diff: Dict[str, Any] | None = 
     </div>
   </body>
 </html>'''
+
+
+def build_system_alert_html(title: str, cards: List[Dict[str, Any]], context: str = 'system alert') -> str:
+    return build_card_email_html(title, cards, context=context)
 
 
 def build_notification_body(data: Dict[str, Any], diff: Dict[str, Any] | None = None, context: str = 'change') -> str:
@@ -604,7 +609,17 @@ def run_test_email():
             failure_shot = shots.get('monthly')
         except Exception:
             pass
-        notify(subject, body, [failure_shot] if failure_shot else [], route=EmailRoute.ADMIN)
+        failure_html = build_system_alert_html(
+            subject,
+            [
+                {'label': 'Route', 'value': 'administrators only'},
+                {'label': 'Error', 'value': str(e), 'tone': 'error'},
+                {'label': 'Consecutive Failures', 'value': failures, 'tone': 'warning'},
+                {'label': 'Traceback', 'value': tb[-3000:], 'tone': 'error'},
+            ],
+            context='manual full-flow test failed',
+        )
+        notify(subject, body, [failure_shot] if failure_shot else [], html_body=failure_html, route=EmailRoute.ADMIN)
         raise
 
 
@@ -698,7 +713,17 @@ def run_check(force=False, no_random=False):
         write_health(last_run_at=now_utc(), last_error=str(e), consecutive_failures=failures, last_window=window or 'forced')
         subject = 'Quant GT Monitor Failed' if failures < 3 else f'Quant GT Monitor Consecutive Failures ({failures})'
         body = f'Window: {window or "forced"}\nError: {e}\nConsecutive failures: {failures}\n\n{tb[-2000:]}'
-        notify(subject, body, [failure_shot] if failure_shot else [], route=EmailRoute.ADMIN)
+        failure_html = build_system_alert_html(
+            subject,
+            [
+                {'label': 'Window', 'value': window or 'forced'},
+                {'label': 'Error', 'value': str(e), 'tone': 'error'},
+                {'label': 'Consecutive Failures', 'value': failures, 'tone': 'warning'},
+                {'label': 'Traceback', 'value': tb[-3000:], 'tone': 'error'},
+            ],
+            context='scheduled monitor failed',
+        )
+        notify(subject, body, [failure_shot] if failure_shot else [], html_body=failure_html, route=EmailRoute.ADMIN)
         raise
 
 

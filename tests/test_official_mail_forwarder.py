@@ -84,6 +84,8 @@ class OfficialMailForwarderTests(unittest.TestCase):
         self.assertIn("support@quantgt.io", body)
         self.assertIn("Monthly Picks Updated", body)
         self.assertIn("Forwarded official Quant GT email.", html)
+        self.assertIn("Quant GT Monitor", html)
+        self.assertIn("Official Email", html)
         self.assertIn("<p>The picks changed.</p>", html)
 
     def test_forwarder_is_disabled_by_default(self):
@@ -263,6 +265,9 @@ class OfficialMailForwarderTests(unittest.TestCase):
         self.assertEqual(deliver.call_count, 2)
         self.assertEqual(deliver.call_args_list[0].kwargs["to"], ["friend@example.com", "admin@example.com"])
         self.assertEqual(deliver.call_args_list[1].kwargs["to"], ["admin@example.com"])
+        self.assertIn("html", deliver.call_args_list[1].kwargs)
+        self.assertIn("Quant GT Monitor", deliver.call_args_list[1].kwargs["html"])
+        self.assertIn("Official Mail Forward Failed", deliver.call_args_list[1].kwargs["html"])
 
     def test_check_failure_alert_goes_only_to_admins(self):
         env = {
@@ -287,6 +292,9 @@ class OfficialMailForwarderTests(unittest.TestCase):
 
         deliver.assert_called_once()
         self.assertEqual(deliver.call_args.kwargs["to"], ["admin@example.com"])
+        self.assertIn("html", deliver.call_args.kwargs)
+        self.assertIn("Quant GT Monitor", deliver.call_args.kwargs["html"])
+        self.assertIn("Official Mail Check Failed", deliver.call_args.kwargs["html"])
 
 
 if __name__ == "__main__":

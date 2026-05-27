@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 from quantcheck.config import load_env
 from quantcheck.gmail_api_notify import send_email as deliver_email
+from quantcheck.email_templates import build_card_email_html
 from quantcheck.notify_routes import EmailRoute, recipients_for_route, route_label
 from quantcheck.state import atomic_write_json
 
@@ -73,20 +74,20 @@ def expected_windows_passed(dt_ny: datetime):
     return out
 
 
-def send_email(subject: str, body: str):
+def send_email(subject: str, body: str, html: str | None = None):
     env = load_env(ROOT)
     recipients = recipients_for_route(EmailRoute.ADMIN, env)
     if not recipients:
         log(f'email skipped: {route_label(EmailRoute.ADMIN)} not configured for {subject}')
         return
-    if deliver_email(subject, body, to=recipients):
+    if deliver_email(subject, body, to=recipients, html=html):
         log(f'email sent via {EmailRoute.ADMIN.value} to {", ".join(recipients)}: {subject}')
     else:
         log(f'email send failed or no sender configured: {subject}')
 
 
-def notify(subject: str, body: str):
-    send_email(subject, body)
+def notify(subject: str, body: str, html: str | None = None):
+    send_email(subject, body, html=html)
     save_json(STATE / 'last_health_notification.json', {'subject': subject, 'body': body, 'at': datetime.now(timezone.utc).isoformat()})
     print(subject)
     print(body)
@@ -134,7 +135,21 @@ def check(force_alert=False):
             '',
             'Action: check scraper login/selectors and recent cron logs if this is not a forced test.',
         ])
-        notify('Quant GT Monitor Health Alert', body)
+        html = build_card_email_html(
+            'Health Alert',
+            [
+                {'label': 'NY Time', 'value': now_ny.isoformat()},
+                {'label': 'Last Run', 'value': h.get('last_run_at')},
+                {'label': 'Last Success', 'value': h.get('last_success_at')},
+                {'label': 'Last Window', 'value': h.get('last_window')},
+                {'label': 'Consecutive Failures', 'value': failures, 'tone': 'warning'},
+                {'label': 'Problems', 'value': '\n'.join(problems), 'tone': 'error'},
+                {'label': 'Last Error', 'value': str(h.get('last_error') or 'None')[:2000], 'tone': 'error'},
+                {'label': 'Action', 'value': 'Check scraper login/selectors and recent cron logs if this is not a forced test.'},
+            ],
+            context='health watchdog',
+        )
+        notify('Quant GT Monitor Health Alert', body, html=html)
         log('alert: ' + '; '.join(problems))
     else:
         log('ok')
