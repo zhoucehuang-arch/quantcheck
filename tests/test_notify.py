@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from quantcheck.gmail_api_notify import parse_recipients
+from quantcheck.gmail_api_notify import parse_recipients, send_email
 from quantcheck.notify_routes import EmailRoute, admin_recipients, recipients_for_route, subscriber_recipients
 
 
@@ -77,6 +77,20 @@ class NotifyTests(unittest.TestCase):
                 recipients_for_route(EmailRoute.PICKS_UPDATE, env),
                 ["friend@example.com", "admin@example.com"],
             )
+
+    def test_send_email_sends_one_private_message_per_recipient(self):
+        calls = []
+
+        def fake_gmail(subject, body, to=None, attachments=None, html=None):
+            calls.append(list(to or []))
+            return True
+
+        with patch("quantcheck.gmail_api_notify.send_via_gmail_api", side_effect=fake_gmail), \
+             patch("quantcheck.gmail_api_notify.send_via_smtp") as smtp:
+            self.assertTrue(send_email("Subject", "Body", to=["a@example.com", "b@example.com"]))
+
+        self.assertEqual(calls, [["a@example.com"], ["b@example.com"]])
+        smtp.assert_not_called()
 
 
 if __name__ == "__main__":

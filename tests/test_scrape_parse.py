@@ -79,6 +79,11 @@ class ScrapeParseTests(unittest.TestCase):
 
         self.assertEqual(extract_pick_date(text, "monthly"), "May Holdings 05/01/26 - now")
 
+    def test_monthly_updated_date_is_supported(self):
+        text = "Portfolio Return Latest Holdings Updated May 1, 2026 MTD +14.76% COMPANY SYMBOL"
+
+        self.assertEqual(extract_pick_date(text, "monthly"), "Updated May 1, 2026")
+
     def test_week_of_date_is_supported(self):
         text = "Weekly Picks Guidance only Week of May 25, 2026 COMPANY SYMBOL SECTOR"
 

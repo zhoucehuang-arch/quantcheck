@@ -53,7 +53,7 @@ NY = ZoneInfo('America/New_York')
 WINDOWS = {
     'premarket_0830': (8, 30),
     'premarket_0900': (9, 0),
-    'open_0940': (9, 40),
+    'daily_non_trading_1200': (12, 0),
     'postmarket_1700': (17, 0),
 }
 
@@ -125,9 +125,9 @@ def format_pick_list(title: str, section: Dict[str, Any], max_rows: int = 12) ->
         return lines
     for idx, row in enumerate(rows[:max_rows], 1):
         if title.startswith('Monthly'):
-            meta = format_row_brief(row, ['return', 'rating', 'gt_score', 'current_price', 'buy_or_entry_price'])
+            meta = format_row_brief(row, ['return', 'gt_score', 'current_price', 'buy_or_entry_price', 'analyst_signal'])
         else:
-            meta = format_row_brief(row, ['rating', 'gt_score', 'current_price', 'buy_or_entry_price', 'analyst_signal'])
+            meta = format_row_brief(row, ['gt_score', 'current_price', 'buy_or_entry_price', 'analyst_signal'])
         symbol = row.get('symbol') or '?'
         company = row.get('company') or ''
         lines.append(f"{idx}. {symbol} — {company}" + (f" | {meta}" if meta else ''))
@@ -144,64 +144,74 @@ def build_notification_html(data: Dict[str, Any], diff: Dict[str, Any] | None = 
         rows = section.get('rows', []) or []
         if mode == 'monthly':
             cols = [
-                ('symbol', 'Symbol'), ('company', 'Company'), ('return', 'Return'), ('rating', 'Rating'),
-                ('gt_score', 'GT Score'), ('current_price', 'Price'), ('buy_or_entry_price', 'Entry'), ('next_earnings', 'Earnings')
+                ('return', 'Return'),
+                ('gt_score', 'GT Score'),
+                ('current_price', 'Price'),
+                ('buy_or_entry_price', 'Entry'),
+                ('analyst_signal', 'Analyst Signal'),
+                ('next_earnings', 'Earnings'),
             ]
         else:
             cols = [
-                ('symbol', 'Symbol'), ('company', 'Company'), ('sector', 'Sector'), ('rating', 'Rating'),
-                ('gt_score', 'GT Score'), ('current_price', 'Price'), ('buy_or_entry_price', 'Buy'), ('analyst_signal', 'Signal')
+                ('sector', 'Sector'),
+                ('gt_score', 'GT Score'),
+                ('current_price', 'Price'),
+                ('buy_or_entry_price', 'Buy'),
+                ('analyst_signal', 'Analyst Signal'),
             ]
-        header = ''.join(f'<th style="{TH}">{esc(label)}</th>' for _, label in cols)
-        body = []
+
+        def metric(label: str, value: Any, key: str) -> str:
+            sval = str(value or '')
+            val_style = 'font-size:14px;line-height:1.3;color:#0f172a;font-weight:700;word-break:break-word;'
+            if key in {'return', 'gt_score'}:
+                if sval.startswith('+'):
+                    val_style += 'color:#16a34a;'
+                elif sval.startswith('-'):
+                    val_style += 'color:#dc2626;'
+            return f'''
+                <div style="display:block;margin:8px 0 0 0;">
+                  <div style="font-size:11px;line-height:1.25;color:#64748b;text-transform:uppercase;letter-spacing:.04em;">{esc(label)}</div>
+                  <div style="{val_style}">{esc(value)}</div>
+                </div>'''
+
+        cards = []
         for idx, row in enumerate(rows, 1):
-            tds = []
-            for key, _ in cols:
-                val = row.get(key, '')
-                style = TD
-                sval = str(val or '')
-                if key == 'symbol':
-                    style += 'font-weight:700;color:#16a34a;white-space:nowrap;'
-                elif key in {'return', 'gt_score'}:
-                    style += 'text-align:center;font-weight:700;'
-                    if sval.startswith('+'):
-                        style += 'color:#16a34a;'
-                    elif sval.startswith('-'):
-                        style += 'color:#dc2626;'
-                elif key in {'current_price', 'buy_or_entry_price'}:
-                    style += 'text-align:right;white-space:nowrap;'
-                elif key in {'rating', 'analyst_signal'}:
-                    style += 'text-align:center;white-space:nowrap;'
-                tds.append(f'<td style="{style}">{esc(val)}</td>')
-            body.append(f'<tr>{"".join(tds)}</tr>')
-        if not body:
-            body.append(f'<tr><td colspan="{len(cols)}" style="{TD}">No rows captured</td></tr>')
+            symbol = row.get('symbol') or '?'
+            company = row.get('company') or ''
+            metrics = ''.join(metric(label, row.get(key, ''), key) for key, label in cols if row.get(key) not in (None, ''))
+            cards.append(f'''
+              <tr>
+                <td style="padding:0 0 10px 0;">
+                  <div style="display:block;border:1px solid #d7e3da;border-radius:12px;background:#ffffff;padding:12px 13px;">
+                    <div style="font-size:17px;line-height:1.25;font-weight:800;color:#16a34a;word-break:break-word;">{esc(symbol)}</div>
+                    <div style="font-size:14px;line-height:1.35;color:#334155;margin-top:2px;word-break:break-word;">{esc(company)}</div>
+                    {metrics}
+                  </div>
+                </td>
+              </tr>''')
+        if not cards:
+            cards.append(f'<tr><td style="{TD}">No rows captured</td></tr>')
         return f'''
         <section style="margin:20px 0 0 0;">
           <h2 style="font-size:18px;line-height:1.3;color:#0f172a;margin:0 0 6px 0;">{esc(section_name)}</h2>
           <div style="font-size:15px;color:#64748b;margin:0 0 10px 0;">Date: {esc(section.get('pick_date', 'Unknown'))} · {len(rows)} stocks</div>
-          <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #d7e3da;border-radius:12px;background:#ffffff;">
-            <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;min-width:980px;font-size:15px;line-height:1.4;">
-              <thead><tr>{header}</tr></thead>
-              <tbody>{''.join(body)}</tbody>
-            </table>
-          </div>
+          <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;font-size:15px;line-height:1.4;">
+            <tbody>{''.join(cards)}</tbody>
+          </table>
         </section>'''
 
     def change_box(diff_obj: Dict[str, Any] | None) -> str:
         if diff_obj is None:
             return ''
 
-        tag_style = 'display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;line-height:1;background:#ffffff;border:1px solid #d7e3da;color:#334155;margin:0 6px 6px 0;white-space:nowrap;'
+        tag_style = 'display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;line-height:1;background:#ffffff;border:1px solid #d7e3da;color:#334155;margin:0 6px 6px 0;white-space:normal;'
         add_pill = tag_style + 'border-color:#86efac;background:#f0fdf4;color:#15803d;'
         remove_pill = tag_style + 'border-color:#fecaca;background:#fff7f7;color:#b91c1c;'
-        change_th = TH
-        change_td = 'border-bottom:1px solid #d7e3da;padding:10px 12px;color:#0f172a;vertical-align:middle;background:#ffffff;font-size:14px;line-height:1.35;'
-        symbol_td = change_td + 'font-weight:800;color:#16a34a;white-space:nowrap;'
-        field_td = change_td + 'font-weight:700;color:#334155;white-space:nowrap;'
-        old_td = change_td + 'color:#64748b;'
-        new_td = change_td + 'color:#0f7a36;font-weight:700;background:#f8fff9;'
-        arrow_td = change_td + 'text-align:center;color:#94a3b8;font-weight:800;width:36px;'
+        change_card = 'display:block;border:1px solid #d7e3da;border-radius:12px;background:#ffffff;padding:11px 12px;margin:0 0 8px 0;'
+        change_label = 'font-size:11px;line-height:1.25;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-top:7px;'
+        change_value = 'font-size:14px;line-height:1.35;color:#0f172a;font-weight:700;word-break:break-word;'
+        old_value = change_value + 'color:#64748b;font-weight:600;'
+        new_value = change_value + 'color:#0f7a36;'
 
         def field_label(name: str) -> str:
             return esc(str(name).replace('_', ' ').title())
@@ -213,13 +223,15 @@ def build_notification_html(data: Dict[str, Any], diff: Dict[str, Any] | None = 
 
         def change_row(symbol: str, field: str, old: Any, new: Any) -> str:
             return f'''
-              <tr>
-                <td style="{symbol_td}">{esc(symbol or '?')}</td>
-                <td style="{field_td}">{field_label(field)}</td>
-                <td style="{old_td}">{esc(old)}</td>
-                <td style="{arrow_td}">→</td>
-                <td style="{new_td}">{esc(new)}</td>
-              </tr>'''
+              <div style="{change_card}">
+                <div style="font-size:16px;line-height:1.25;font-weight:800;color:#16a34a;word-break:break-word;">{esc(symbol or '?')}</div>
+                <div style="{change_label}">Field</div>
+                <div style="{change_value}">{field_label(field)}</div>
+                <div style="{change_label}">Previous</div>
+                <div style="{old_value}">{esc(old)}</div>
+                <div style="{change_label}">New</div>
+                <div style="{new_value}">{esc(new)}</div>
+              </div>'''
 
         def changed_rows(rows: List[Dict[str, Any]]) -> str:
             parts = []
@@ -254,41 +266,24 @@ def build_notification_html(data: Dict[str, Any], diff: Dict[str, Any] | None = 
             add_remove_rows = ''
             if added:
                 add_remove_rows += f'''
-              <tr>
-                <td style="{symbol_td}">—</td>
-                <td style="{field_td}">Added</td>
-                <td style="{old_td}">—</td>
-                <td style="{arrow_td}">→</td>
-                <td style="{new_td}">{pills(added, add_pill)}</td>
-              </tr>'''
+              <div style="{change_card}">
+                <div style="font-size:16px;line-height:1.25;font-weight:800;color:#16a34a;">Added</div>
+                <div style="margin-top:8px;">{pills(added, add_pill)}</div>
+              </div>'''
             if removed:
                 add_remove_rows += f'''
-              <tr>
-                <td style="{symbol_td}">—</td>
-                <td style="{field_td}">Removed</td>
-                <td style="{old_td}">{pills(removed, remove_pill)}</td>
-                <td style="{arrow_td}">→</td>
-                <td style="{new_td}">—</td>
-              </tr>'''
+              <div style="{change_card}">
+                <div style="font-size:16px;line-height:1.25;font-weight:800;color:#b91c1c;">Removed</div>
+                <div style="margin-top:8px;">{pills(removed, remove_pill)}</div>
+              </div>'''
             rows_html = date_rows + add_remove_rows + changed_rows(changed)
             if not rows_html:
-                rows_html = f'<tr><td colspan="5" style="{change_td}">No detail rows captured</td></tr>'
+                rows_html = f'<div style="{change_card}">No detail rows captured</div>'
             return f'''
             <div style="margin:14px 0 0 0;">
               <h3 style="font-size:18px;line-height:1.3;color:#0f172a;margin:0 0 6px 0;">{esc(title)}</h3>
               <div style="font-size:15px;color:#64748b;margin:0 0 10px 0;">{esc(summary)}</div>
-              <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #d7e3da;border-radius:12px;background:#ffffff;">
-                <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;min-width:760px;font-size:14px;line-height:1.35;">
-                  <thead><tr>
-                    <th style="{change_th}">Symbol</th>
-                    <th style="{change_th}">Field</th>
-                    <th style="{change_th}">Previous</th>
-                    <th style="{change_th};text-align:center;width:36px;">→</th>
-                    <th style="{change_th}">New</th>
-                  </tr></thead>
-                  <tbody>{rows_html}</tbody>
-                </table>
-              </div>
+              {rows_html}
             </div>'''
 
         return f'''
@@ -302,12 +297,12 @@ def build_notification_html(data: Dict[str, Any], diff: Dict[str, Any] | None = 
     monthly = data.get('monthly', {})
     weekly = data.get('weekly', {})
     fetched = data.get('fetched_at') or now_utc()
-    TH = 'background:#dcfce7;color:#0f7a36;border-bottom:2px solid #16a34a;padding:12px 13px;text-align:left;font-size:14px;white-space:nowrap;'
+    TH = 'background:#dcfce7;color:#0f7a36;border-bottom:2px solid #16a34a;padding:12px 13px;text-align:left;font-size:14px;white-space:normal;'
     TD = 'border-bottom:1px solid #d7e3da;padding:12px 13px;color:#0f172a;vertical-align:middle;background:#ffffff;'
     return f'''<!doctype html>
 <html>
   <body style="margin:0;padding:0;background:#f6f8f7;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
-    <div style="max-width:1180px;margin:0 auto;padding:14px 8px;">
+    <div style="max-width:680px;margin:0 auto;padding:12px 8px;">
       <div style="background:#ffffff;border:1px solid #d7e3da;border-radius:16px;padding:18px 14px;">
         <div style="font-size:12px;color:#16a34a;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Quant GT Monitor</div>
         <h1 style="font-size:26px;line-height:1.2;margin:6px 0 8px 0;color:#0f172a;">Picks Report</h1>
@@ -563,8 +558,12 @@ def run_check(force=False, no_random=False):
     dt_ny = datetime.now(NY)
     window = current_window(dt_ny)
     if not force:
-        if not trading_day(dt_ny):
-            log('skip: not NYSE trading day')
+        is_trading = trading_day(dt_ny)
+        if is_trading and window == 'daily_non_trading_1200':
+            log(f'skip: non-trading daily window on trading day at {dt_ny.isoformat()}')
+            return
+        if not is_trading and window != 'daily_non_trading_1200':
+            log(f'skip: not NYSE trading day and outside daily non-trading window at {dt_ny.isoformat()}')
             return
         if not window:
             log(f'skip: outside target window at {dt_ny.isoformat()}')

@@ -407,7 +407,7 @@ def write_summary(wb, data):
     ws.cell(7, 3, "Return")
     ws.cell(7, 5, "Symbol")
     ws.cell(7, 6, "GT Score")
-    ws.cell(7, 7, "Rating")
+    ws.cell(7, 7, "Signal")
     for c in [1, 2, 3, 5, 6, 7]:
         ws.cell(7, c).fill = PatternFill("solid", fgColor=GREEN_SOFT)
         ws.cell(7, c).font = Font(name="Aptos", bold=True, color=GREEN_DARK)
@@ -421,7 +421,7 @@ def write_summary(wb, data):
     for i, r in enumerate(data["weekly"]["rows"], 8):
         ws.cell(i, 5, r.get("symbol"))
         ws.cell(i, 6, r.get("gt_score"))
-        ws.cell(i, 7, r.get("rating"))
+        ws.cell(i, 7, r.get("analyst_signal"))
 
     max_row = max(8 + len(data['weekly']['rows']) - 1, 8 + len(data['monthly']['rows']) - 1)
     apply_body_style(ws, 8, max_row, 7)
@@ -446,18 +446,18 @@ def write_picks_sheet(wb, sheet_name, title, pick_date, rows, mode):
     ws = wb.create_sheet(sheet_name)
     setup_sheet(ws, title, f"Recommendation date: {pick_date}")
     if mode == "monthly":
-        headers = ["Rank", "Symbol", "Company", "Held Since", "Return", "Sector", "Rating", "GT Score", "Current Price", "Entry/Buy Price", "Revenue Growth", "Next Earnings"]
-        widths = [8, 10, 30, 13, 12, 24, 14, 12, 14, 16, 16, 18]
+        headers = ["Rank", "Symbol", "Company", "Held Since", "Return", "Sector", "GT Score", "Current Price", "Entry/Buy Price", "Revenue Growth", "Next Earnings", "Analyst Signal"]
+        widths = [8, 10, 30, 13, 12, 24, 12, 14, 16, 16, 18, 18]
     else:
-        headers = ["Rank", "Symbol", "Company", "Sector", "Rating", "GT Score", "Current Price", "Buy Price", "Market Cap", "Revenue Growth", "Next Earnings", "Analyst Signal"]
-        widths = [8, 10, 30, 24, 14, 12, 14, 16, 16, 16, 18, 18]
+        headers = ["Rank", "Symbol", "Company", "Sector", "GT Score", "Current Price", "Buy Price", "Market Cap", "Revenue Growth", "Next Earnings", "Analyst Signal"]
+        widths = [8, 10, 30, 24, 12, 14, 16, 16, 16, 18, 18]
     style_table(ws, headers, 6, widths)
     for idx, r in enumerate(rows, 1):
         rr = 6 + idx
         if mode == "monthly":
-            vals = [idx, r.get("symbol"), r.get("company"), r.get("held_since"), r.get("return"), r.get("sector"), r.get("rating"), r.get("gt_score"), r.get("current_price"), r.get("buy_or_entry_price"), r.get("revenue_growth_yoy"), r.get("next_earnings")]
+            vals = [idx, r.get("symbol"), r.get("company"), r.get("held_since"), r.get("return"), r.get("sector"), r.get("gt_score"), r.get("current_price"), r.get("buy_or_entry_price"), r.get("revenue_growth_yoy"), r.get("next_earnings"), r.get("analyst_signal")]
         else:
-            vals = [idx, r.get("symbol"), r.get("company"), r.get("sector"), r.get("rating"), r.get("gt_score"), r.get("current_price"), r.get("buy_or_entry_price"), r.get("market_cap"), r.get("revenue_growth_yoy"), r.get("next_earnings"), r.get("analyst_signal")]
+            vals = [idx, r.get("symbol"), r.get("company"), r.get("sector"), r.get("gt_score"), r.get("current_price"), r.get("buy_or_entry_price"), r.get("market_cap"), r.get("revenue_growth_yoy"), r.get("next_earnings"), r.get("analyst_signal")]
         for c, v in enumerate(vals, 1):
             ws.cell(rr, c, v)
     if rows:
@@ -469,17 +469,17 @@ def write_picks_sheet(wb, sheet_name, title, pick_date, rows, mode):
     if mode == "monthly":
         align_map = {
             1: "center", 2: "left", 3: "left", 4: "center", 5: "center", 6: "left",
-            7: "center", 8: "center", 9: "right", 10: "right", 11: "center", 12: "center"
+            7: "center", 8: "right", 9: "right", 10: "center", 11: "center", 12: "center"
         }
     else:
         align_map = {
-            1: "center", 2: "left", 3: "left", 4: "left", 5: "center", 6: "center",
-            7: "right", 8: "right", 9: "right", 10: "center", 11: "center", 12: "center"
+            1: "center", 2: "left", 3: "left", 4: "left", 5: "center", 6: "right",
+            7: "right", 8: "right", 9: "center", 10: "center", 11: "center"
         }
     set_alignments(ws, align_map, 7, data_last_row)
     # Accent key columns
     for rr in range(7, 7 + len(rows)):
-        for cc in [2, 6 if mode == 'weekly' else 8]:
+        for cc in [2, 5 if mode == 'weekly' else 7]:
             ws.cell(rr, cc).font = Font(name="Aptos", size=10, bold=True, color=GREEN)
         # Return/revenue growth coloring
         for cc in range(1, len(headers)+1):

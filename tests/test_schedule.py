@@ -1,11 +1,31 @@
 import unittest
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
-from quantcheck.schedule import DEFAULT_SCHEDULE, parse_schedule
+from quantcheck.schedule import (
+    NON_TRADING_DAY_SCHEDULE,
+    TRADING_DAY_SCHEDULE,
+    parse_schedule,
+    schedule_for_date,
+)
+from quantcheck.picks_check import current_window
 
 
 class ScheduleTests(unittest.TestCase):
-    def test_empty_schedule_uses_default(self):
-        self.assertEqual(parse_schedule(""), DEFAULT_SCHEDULE)
+    def test_empty_schedule_uses_dynamic_trading_day_default(self):
+        self.assertEqual(parse_schedule("", current_date=date(2026, 5, 26)), TRADING_DAY_SCHEDULE)
+
+    def test_empty_schedule_uses_non_trading_day_default(self):
+        self.assertEqual(parse_schedule("", current_date=date(2026, 5, 30)), NON_TRADING_DAY_SCHEDULE)
+
+    def test_trading_day_schedule_is_premarket_twice_and_postmarket_once(self):
+        self.assertEqual(
+            TRADING_DAY_SCHEDULE,
+            [(8, 30, "picks"), (9, 0, "picks"), (17, 0, "picks")],
+        )
+
+    def test_non_trading_day_schedule_is_once_daily(self):
+        self.assertEqual(NON_TRADING_DAY_SCHEDULE, [(12, 0, "picks")])
 
     def test_custom_schedule_parses_kinds(self):
         self.assertEqual(
@@ -16,6 +36,17 @@ class ScheduleTests(unittest.TestCase):
     def test_invalid_schedule_kind_is_rejected(self):
         with self.assertRaises(ValueError):
             parse_schedule("08:30:unknown")
+
+    def test_schedule_for_date_treats_market_holiday_as_non_trading_day(self):
+        # Memorial Day 2026: NYSE closed.
+        self.assertEqual(schedule_for_date(date(2026, 5, 25)), NON_TRADING_DAY_SCHEDULE)
+
+    def test_current_window_has_no_open_0940_window_and_has_daily_non_trading(self):
+        ny = ZoneInfo("America/New_York")
+        self.assertEqual(current_window(datetime(2026, 5, 26, 8, 30, tzinfo=ny)), "premarket_0830")
+        self.assertEqual(current_window(datetime(2026, 5, 26, 9, 0, tzinfo=ny)), "premarket_0900")
+        self.assertIsNone(current_window(datetime(2026, 5, 26, 9, 40, tzinfo=ny)))
+        self.assertEqual(current_window(datetime(2026, 5, 30, 12, 0, tzinfo=ny)), "daily_non_trading_1200")
 
 
 if __name__ == "__main__":

@@ -57,6 +57,12 @@ class DiffTests(unittest.TestCase):
             [{"symbol": "ABC", "fields": {"rating": {"old": "Buy", "new": "Hold"}}}],
         )
 
+    def test_missing_new_rating_is_treated_as_scraper_gap_not_pick_change(self):
+        old = [{"symbol": "ABC", "company": "Alpha", "rating": "Strong Buy", "gt_score": "4.9/5"}]
+        new = [{"symbol": "ABC", "company": "Alpha", "rating": None, "gt_score": "4.9/5"}]
+
+        self.assertEqual(diff_rows(old, new)["changed"], [])
+
     def test_unknown_dates_are_not_reported_as_source_changes(self):
         old = {"monthly": {"pick_date": "May 2026", "rows": []}, "weekly": {"pick_date": "Unknown", "rows": []}}
         new = {"monthly": {"pick_date": "Unknown", "rows": []}, "weekly": {"pick_date": "05/22/26", "rows": []}}

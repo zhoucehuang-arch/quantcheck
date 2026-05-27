@@ -3,20 +3,39 @@ import unittest
 from quantcheck.validation import validate_member_picks_data
 
 
+def valid_monthly_row(symbol="M1"):
+    return {
+        "symbol": symbol,
+        "company": "Monthly One Inc.",
+        "current_price": "$20.00",
+        "return": "+12.30%",
+        "sector": "Technology",
+        "gt_score": "4.50/5",
+        "buy_or_entry_price": "$18.00",
+        "next_earnings": "2026-06-15",
+        "analyst_signal": "Buy +0.25",
+    }
+
+
+def valid_weekly_row(symbol="W1"):
+    return {
+        "symbol": symbol,
+        "company": "Weekly One Inc.",
+        "current_price": "$10.00",
+        "buy_or_entry_price": "$9.50",
+        "sector": "Technology",
+        "gt_score": "4.20/5",
+        "next_earnings": "2026-06-01",
+        "analyst_signal": "Buy +0.20",
+    }
+
+
 def valid_capture():
     return {
-        "monthly": {"pick_date": "May 2026", "rows": [{"symbol": "M1"}]},
+        "monthly": {"pick_date": "May 2026", "rows": [valid_monthly_row()]},
         "weekly": {
             "pick_date": "05/22/26",
-            "rows": [
-                {
-                    "symbol": "W1",
-                    "current_price": "$10.00",
-                    "buy_or_entry_price": "$9.50",
-                    "next_earnings": "2026-06-01",
-                    "analyst_signal": "Buy +0.20",
-                }
-            ],
+            "rows": [valid_weekly_row()],
         },
     }
 
@@ -28,10 +47,7 @@ class ValidationTests(unittest.TestCase):
     def test_demo_weekly_signature_is_rejected(self):
         data = valid_capture()
         data["weekly"]["pick_date"] = "05/15/26"
-        data["weekly"]["rows"] = [
-            {"symbol": symbol, "current_price": "$1", "buy_or_entry_price": "$1", "next_earnings": "x", "analyst_signal": "x"}
-            for symbol in ["SNDK", "LITE", "AAOI", "FORM", "VIAV", "ENPH"]
-        ]
+        data["weekly"]["rows"] = [valid_weekly_row(symbol) for symbol in ["SNDK", "LITE", "AAOI", "FORM", "VIAV", "ENPH"]]
 
         with self.assertRaisesRegex(RuntimeError, "demo Weekly Picks"):
             validate_member_picks_data(data)
@@ -45,10 +61,10 @@ class ValidationTests(unittest.TestCase):
 
     def test_new_layout_without_detail_rows_passes(self):
         data = {
-            "monthly": {"pick_date": "May Holdings 05/01/26 - now", "rows": [{"symbol": "M1"}]},
+            "monthly": {"pick_date": "May Holdings 05/01/26 - now", "rows": [valid_monthly_row()]},
             "weekly": {
                 "pick_date": "05/22/26",
-                "rows": [{"symbol": "W1", "company": "Weekly One", "sector": "Tech", "rating": "Buy", "gt_score": "88"}],
+                "rows": [valid_weekly_row()],
             },
         }
 

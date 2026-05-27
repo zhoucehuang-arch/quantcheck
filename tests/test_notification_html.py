@@ -2,7 +2,6 @@ import unittest
 import sys
 import types
 
-sys.modules.setdefault("pandas_market_calendars", types.SimpleNamespace())
 sys.modules.setdefault("playwright", types.ModuleType("playwright"))
 sys.modules.setdefault(
     "playwright.sync_api",
@@ -56,14 +55,16 @@ class NotificationHtmlTests(unittest.TestCase):
         self.assertIn("Buy +0.45", html)
         self.assertIn("Strong Buy +0.60", html)
         self.assertIn("Buy +0.38", html)
-        self.assertIn("→", html)
+        self.assertIn("New", html)
         self.assertNotIn("<ul", html)
 
     def test_changes_use_email_safe_tables_aligned_with_picks_tables(self):
         data = {
             "fetched_at": "2026-05-24T16:10:09",
             "source": "https://quantgt.io",
-            "monthly": {"pick_date": "Unknown", "rows": []},
+            "monthly": {"pick_date": "Unknown", "rows": [
+                {"symbol": "AAOI", "company": "Applied Optoelectronics, Inc.", "return": "+97.02%", "gt_score": "4.98/5", "current_price": "$177.62", "buy_or_entry_price": "$90.15", "analyst_signal": "Buy +0.29"}
+            ]},
             "weekly": {"pick_date": "Week of May 25, 2026", "rows": []},
         }
         diff = {
@@ -82,14 +83,15 @@ class NotificationHtmlTests(unittest.TestCase):
 
         html = build_notification_html(data, diff, context="layout test")
 
-        self.assertIn('min-width:980px', html)
-        self.assertIn('min-width:760px', html)
+        self.assertNotIn('min-width:980px', html)
+        self.assertNotIn('min-width:760px', html)
         self.assertIn('Field', html)
         self.assertIn('Previous', html)
         self.assertIn('New', html)
-        self.assertIn('<td style=', html)
-        self.assertIn('font-size:14px', html)
-        self.assertNotIn('display:inline-block;color:#64748b', html)
+        self.assertIn('AAOI', html)
+        self.assertIn('display:block', html)
+        self.assertIn('Analyst Signal', html)
+        self.assertNotIn('overflow-x:auto', html)
         self.assertNotIn('min-width:98px', html)
 
 

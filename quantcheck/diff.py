@@ -71,6 +71,10 @@ def diff_rows(old_rows: List[Dict[str, Any]], new_rows: List[Dict[str, Any]]) ->
                 continue
             old_value = old_map[key].get(field, "")
             new_value = new_map[key].get(field, "")
+            if field == "rating" and str(new_value or "").strip() == "":
+                # Treat a newly-missing rating as scraper/source-field degradation, not a user-facing pick change.
+                # Quant GT can still expose the actionable label in analyst_signal; an empty New cell is misleading.
+                continue
             if field == "analyst_signal":
                 if is_major_analyst_signal_change(old_value, new_value):
                     fields[field] = {"old": old_value, "new": new_value}

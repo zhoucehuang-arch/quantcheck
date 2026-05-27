@@ -31,13 +31,27 @@ def load_env():
     load_dotenv(ROOT)
 
 
-def seconds_until_next(schedule):
+def seconds_until_next(raw_schedule: str | None = None):
     now = datetime.now(NY)
     candidates = []
-    for h, m, kind in schedule:
-        target = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        if target <= now:
-            target = target + timedelta(days=1)
+    # Resolve dynamic default schedule separately for each candidate date so
+    # a long-running daemon switches correctly between trading days and
+    # weekends/market holidays without restart.
+    for day_offset in range(0, 8):
+        candidate_day = (now + timedelta(days=day_offset)).date()
+        schedule = parse_schedule(raw_schedule, current_date=candidate_day)
+        for h, m, kind in schedule:
+            target = datetime.combine(candidate_day, datetime.min.time(), tzinfo=NY).replace(hour=h, minute=m, second=0, microsecond=0)
+            if target <= now:
+                continue
+            candidates.append((target, kind))
+    if not candidates:
+        # Defensive fallback; practically unreachable unless schedule parsing
+        # returns no entries for a full week.
+        tomorrow = (now + timedelta(days=1)).date()
+        schedule = parse_schedule(raw_schedule, current_date=tomorrow)
+        h, m, kind = schedule[0]
+        target = datetime.combine(tomorrow, datetime.min.time(), tzinfo=NY).replace(hour=h, minute=m, second=0, microsecond=0)
         candidates.append((target, kind))
     target, kind = min(candidates, key=lambda x: x[0])
     return max(1, int((target - now).total_seconds())), target, kind
@@ -113,7 +127,7 @@ def run_once(kind: str):
 
 def daemon():
     load_env()
-    schedule = parse_schedule(os.environ.get("QUANTCHECK_SCHEDULE"))
+    raw_schedule = os.environ.get("QUANTCHECK_SCHEDULE")
     stop = False
     def handler(signum, frame):
         nonlocal stop
@@ -123,7 +137,7 @@ def daemon():
     signal.signal(signal.SIGINT, handler)
     log("scheduler started")
     while not stop:
-        sleep_s, target, kind = seconds_until_next(schedule)
+        sleep_s, target, kind = seconds_until_next(raw_schedule)
         log(f"next {kind} at {target.isoformat()} in {sleep_s}s")
         end = time.time() + sleep_s
         while not stop and time.time() < end:

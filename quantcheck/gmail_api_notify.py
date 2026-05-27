@@ -84,7 +84,7 @@ def _build_message(sender: str, recipients: list[str], subject: str, body: str, 
 
 
 def send_via_smtp(subject: str, body: str, to: str | Iterable[str] | None = None, attachments: Iterable[Path] | None = None, timeout: int = 30, html: str | None = None) -> bool:
-    recipients = parse_recipients(to)
+    recipients = parse_recipients(to) if to is None else parse_recipients(to, file_path="")
     host = os.environ.get("SMTP_HOST", "")
     port = int(os.environ.get("SMTP_PORT", "465"))
     username = os.environ.get("SMTP_USERNAME", "")
@@ -130,7 +130,7 @@ def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None =
         from googleapiclient.discovery import build
     except Exception:
         return False
-    recipients = parse_recipients(to)
+    recipients = parse_recipients(to) if to is None else parse_recipients(to, file_path="")
     sender = os.environ.get("GMAIL_API_FROM") or os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME")
     token_path = Path(os.environ.get("GMAIL_API_TOKEN", ROOT / ".config" / "gmail-api" / "token.json"))
     if not (recipients and sender and token_path.exists()):
@@ -156,4 +156,12 @@ def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None =
 
 
 def send_email(subject: str, body: str, to: str | Iterable[str] | None = None, attachments: Iterable[Path] | None = None, html: str | None = None) -> bool:
-    return send_via_gmail_api(subject, body, to=to, attachments=attachments, html=html) or send_via_smtp(subject, body, to=to, attachments=attachments, html=html)
+    """Send one private message per recipient so subscribers never see each other."""
+    recipients = parse_recipients(to) if to is None else parse_recipients(to, file_path="")
+    if not recipients:
+        return False
+    ok = True
+    for recipient in recipients:
+        sent = send_via_gmail_api(subject, body, to=[recipient], attachments=attachments, html=html) or send_via_smtp(subject, body, to=[recipient], attachments=attachments, html=html)
+        ok = ok and sent
+    return ok

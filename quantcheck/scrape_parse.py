@@ -38,6 +38,8 @@ HEADER_ALIASES = {
     "price": "current_price",
     "current_price": "current_price",
     "last_price": "current_price",
+    "buy_price": "buy_or_entry_price",
+    "entry_price": "buy_or_entry_price",
     "return": "return",
     "portfolio_return": "return",
     "sector": "sector",
@@ -54,6 +56,9 @@ def canonical_header(value: Any) -> str | None:
 def extract_pick_date(text: str, mode: str) -> str:
     clean = clean_text(text)
     if mode == "monthly":
+        match = re.search(rf"\bUpdated\s+(?:{MONTHS})\s+\d{{1,2}},\s+\d{{4}}\b", clean, re.I)
+        if match:
+            return match.group(0)
         match = re.search(rf"\b(?:{MONTHS})\s+(?:Holdings\s+)?\d{{2}}/\d{{2}}/\d{{2}}\s*-\s*(?:now|present|current)\b", clean, re.I)
         if match:
             return match.group(0)
@@ -104,6 +109,8 @@ def rows_from_matrix(matrix: Iterable[Iterable[Any]], mode: str) -> List[Dict[st
             item: dict[str, Any] = {}
             for col, key in enumerate(headers):
                 if key and col < len(row):
+                    if mode == "weekly" and key == "current_price" and normalize_header(rows[header_index][col]) == "price":
+                        key = "buy_or_entry_price"
                     item[key] = row[col]
             if item.get("symbol") and item.get("gt_score"):
                 out.append(item)
@@ -124,11 +131,13 @@ def rows_from_matrix(matrix: Iterable[Iterable[Any]], mode: str) -> List[Dict[st
                 "gt_score": cells[6],
             })
         elif mode == "weekly" and len(cells) >= 5 and not cells[0].startswith("$"):
+            # Current Quant GT weekly table has no Rating column:
+            # COMPANY, SYMBOL, PRICE, SECTOR, GT SCORE.
             out.append({
                 "company": cells[0],
                 "symbol": cells[1],
-                "sector": cells[2],
-                "rating": cells[3],
+                "buy_or_entry_price": cells[2],
+                "sector": cells[3],
                 "gt_score": cells[4],
             })
     return out
