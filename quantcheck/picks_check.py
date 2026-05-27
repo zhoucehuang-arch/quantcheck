@@ -513,19 +513,42 @@ def prune_old_files(directory: Path, pattern: str, keep: int = 200):
     prune_files(directory, pattern, keep)
 
 
-def fetch_current() -> Dict[str, Any]:
+def fetch_current(max_attempts: int = 3, retry_delay_seconds: float = 8.0) -> Dict[str, Any]:
     env = load_env()
     os.environ.setdefault('QUANTGT_EMAIL', env.get('QUANTGT_EMAIL', ''))
     os.environ.setdefault('QUANTGT_PASSWORD', env.get('QUANTGT_PASSWORD', ''))
     report.EMAIL = os.environ.get('QUANTGT_EMAIL', '')
     report.PASSWORD = os.environ.get('QUANTGT_PASSWORD', '')
-    data = report.fetch()
-    validate_member_picks_data(data)
-    if str(data.get('monthly', {}).get('pick_date') or '') == 'Unknown':
-        log('warning: monthly pick date parsed as Unknown; date-only diff will be ignored')
-    data['auth_verified'] = True
-    data['source_policy'] = 'logged-in member page only; unauthenticated/demo data rejected'
-    return data
+
+    errors: List[str] = []
+    max_attempts = max(1, int(max_attempts or 1))
+    for attempt in range(1, max_attempts + 1):
+        try:
+            data = report.fetch()
+            validate_member_picks_data(data)
+            if str(data.get('monthly', {}).get('pick_date') or '') == 'Unknown':
+                log('warning: monthly pick date parsed as Unknown; date-only diff will be ignored')
+            data['auth_verified'] = True
+            data['source_policy'] = 'logged-in member page only; unauthenticated/demo data rejected'
+            if attempt > 1:
+                data['fetch_recovered_after_attempts'] = attempt
+                log(f'fetch recovered on attempt {attempt}/{max_attempts}')
+            return data
+        except Exception as e:
+            err = f'attempt {attempt}/{max_attempts}: {type(e).__name__}: {e}'
+            errors.append(err)
+            log('fetch attempt failed: ' + err)
+            debug_dir = STATE / 'fetch_failures'
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_path = debug_dir / f"fetch_failure_{datetime.now(NY).strftime('%Y-%m-%d_%H%M%S')}_attempt{attempt}.json"
+            try:
+                json_dump(debug_path, {'at': now_utc(), 'attempt': attempt, 'max_attempts': max_attempts, 'error': str(e), 'traceback': traceback.format_exc()[-4000:]})
+                prune_old_files(debug_dir, 'fetch_failure_*.json', keep=80)
+            except Exception:
+                pass
+            if attempt < max_attempts and retry_delay_seconds:
+                time.sleep(retry_delay_seconds)
+    raise RuntimeError('Quant GT fetch failed after retries: ' + ' | '.join(errors))
 
 
 def write_health(**kwargs):
@@ -537,6 +560,52 @@ def write_health(**kwargs):
             old = {}
     obj = {**old, **kwargs, 'updated_at': now_utc()}
     json_dump(HEALTH, obj)
+
+
+def run_test_email():
+    try:
+        data = fetch_current()
+        raw_dir = STATE / 'raw'
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        raw_path = raw_dir / f"picks_raw_test_{datetime.now(NY).strftime('%Y-%m-%d_%H%M%S')}.json"
+        json_dump(raw_path, data)
+        excel = report.export_excel(data)
+        shots = capture_logged_in_screenshots(['monthly', 'weekly'])
+        tg_body = build_telegram_body(data, None, context='manual full-flow test')
+        body = build_notification_body(data, None, context='manual full-flow test')
+        html_body = build_notification_html(data, None, context='manual full-flow test')
+        media = [excel] + list(shots.values())
+        notify(
+            'Quant GT Monitor Test: Full Flow Report + Screenshots',
+            body,
+            media,
+            html_body=html_body,
+            telegram_body=tg_body,
+            route=EmailRoute.ADMIN,
+        )
+        print(json.dumps({'status': 'test_notification_sent', 'excel': str(excel), 'raw': str(raw_path), 'screenshots': {k: str(v) for k, v in shots.items()}}, ensure_ascii=False, indent=2))
+    except Exception as e:
+        tb = traceback.format_exc()
+        log('manual test-email failed: ' + tb)
+        health = json_load(HEALTH) if HEALTH.exists() else {}
+        failures = int(health.get('consecutive_failures') or 0) + 1
+        write_health(last_run_at=now_utc(), last_error=str(e), consecutive_failures=failures, last_window='manual_test_email')
+        subject = 'Quant GT Monitor Test Failed'
+        body = (
+            'Manual full-flow test failed before any user notification was sent.\n'
+            'Route: administrators only\n'
+            f'Error: {e}\n'
+            f'Consecutive failures: {failures}\n\n'
+            f'{tb[-3000:]}'
+        )
+        failure_shot = None
+        try:
+            shots = capture_logged_in_screenshots(['monthly'])
+            failure_shot = shots.get('monthly')
+        except Exception:
+            pass
+        notify(subject, body, [failure_shot] if failure_shot else [], route=EmailRoute.ADMIN)
+        raise
 
 
 def run_baseline(echo: bool = True):
@@ -642,26 +711,7 @@ def main():
     ap.add_argument('--test-email', action='store_true', help='Fetch current picks, export Excel, capture screenshots, and send a test email notification')
     args = ap.parse_args()
     if args.test_email:
-        data = fetch_current()
-        raw_dir = STATE / 'raw'
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        raw_path = raw_dir / f"picks_raw_test_{datetime.now(NY).strftime('%Y-%m-%d_%H%M%S')}.json"
-        json_dump(raw_path, data)
-        excel = report.export_excel(data)
-        shots = capture_logged_in_screenshots(['monthly', 'weekly'])
-        tg_body = build_telegram_body(data, None, context='manual full-flow test')
-        body = build_notification_body(data, None, context='manual full-flow test')
-        html_body = build_notification_html(data, None, context='manual full-flow test')
-        media = [excel] + list(shots.values())
-        notify(
-            'Quant GT Monitor Test: Full Flow Report + Screenshots',
-            body,
-            media,
-            html_body=html_body,
-            telegram_body=tg_body,
-            route=EmailRoute.ADMIN,
-        )
-        print(json.dumps({'status': 'test_notification_sent', 'excel': str(excel), 'raw': str(raw_path), 'screenshots': {k: str(v) for k, v in shots.items()}}, ensure_ascii=False, indent=2))
+        run_test_email()
         return
     if args.mode == 'baseline':
         run_baseline(echo=not args.quiet)

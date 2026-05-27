@@ -93,6 +93,43 @@ def wait_for_picks_content(page, timeout: int = 20000) -> None:
     )
 
 
+def wait_for_parsable_picks_rows(page, mode: str, attempts: int = 3, timeout: int = 20000) -> List[Dict[str, Any]]:
+    """Wait until the rendered page can be parsed into real pick rows.
+
+    Quant GT sometimes renders headings/labels like "GT Score" before the actual
+    table/card rows finish hydrating. Treating that as success caused occasional
+    zero-row Monthly captures. This helper requires parsed rows, and reloads the
+    page before retrying so scheduled runs self-heal instead of immediately
+    falling into the validation gate.
+    """
+    errors = []
+    attempts = max(1, int(attempts or 1))
+    for attempt in range(1, attempts + 1):
+        try:
+            wait_for_picks_content(page, timeout=timeout)
+            # Give client-side table/card hydration one short extra beat after
+            # the first content signal, then parse real rows.
+            page.wait_for_timeout(1200)
+            rows = rows_from_table(page, mode)
+            if rows:
+                return rows
+            text = clean_text(page.locator("main").inner_text(timeout=3000))[:500]
+            errors.append(f"attempt {attempt}: no parsed {mode} rows; main={text!r}")
+        except Exception as e:
+            errors.append(f"attempt {attempt}: {type(e).__name__}: {e}")
+        if attempt < attempts:
+            try:
+                page.reload(wait_until="domcontentloaded", timeout=45000)
+                try:
+                    page.wait_for_load_state("load", timeout=15000)
+                except PlaywrightTimeoutError:
+                    pass
+                page.wait_for_timeout(2500)
+            except Exception as e:
+                errors.append(f"attempt {attempt}: reload failed: {type(e).__name__}: {e}")
+    raise RuntimeError(f"{mode} page did not produce parsable picks rows after {attempts} attempts: " + " | ".join(errors[-3:]))
+
+
 def login(page):
     # `networkidle` is brittle on Quant GT because embedded market/news widgets
     # can keep polling. Use document readiness + table hydration instead.
@@ -288,9 +325,9 @@ def fetch():
         assert_authenticated_page(page, "monthly")
         # Sometimes the authenticated picks content hydrates after document load.
         wait_for_picks_content(page)
+        monthly_rows = wait_for_parsable_picks_rows(page, "monthly")
         monthly_date_text = clean_text(page.locator("main").inner_text())
         monthly_pick_date = extract_pick_date(monthly_date_text, "monthly")
-        monthly_rows = rows_from_table(page, "monthly")
         monthly_rows = expand_and_attach_details(page, monthly_rows, "monthly")
 
         page.goto(f"{BASE}/dashboard/weekly-picks", wait_until="domcontentloaded", timeout=45000)
@@ -301,9 +338,9 @@ def fetch():
         page.wait_for_timeout(2500)
         assert_authenticated_page(page, "weekly")
         wait_for_picks_content(page)
+        weekly_rows = wait_for_parsable_picks_rows(page, "weekly")
         main_text = clean_text(page.locator("main").inner_text())
         weekly_pick_date = extract_pick_date(main_text, "weekly")
-        weekly_rows = rows_from_table(page, "weekly")
         weekly_rows = expand_and_attach_details(page, weekly_rows, "weekly")
 
         browser.close()
