@@ -76,6 +76,12 @@ bash scripts/run-daemon.sh
 # Send a full-flow test email with Excel and screenshots.
 python -m quantcheck.picks_check --test-email
 
+# Manage notification recipients safely.
+quantcheck-recipients check
+quantcheck-recipients add user@example.com
+quantcheck-recipients add --role admin operator@example.com
+quantcheck-recipients remove old@example.com --dry-run
+
 # Run dependency-light local checks.
 python -m compileall -q quantcheck tests
 python -m unittest discover -s tests -v

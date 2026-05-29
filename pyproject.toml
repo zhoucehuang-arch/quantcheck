@@ -26,6 +26,7 @@ quantcheck-picks = "quantcheck.picks_check:main"
 quantcheck-report = "quantcheck.picks_report:main"
 quantcheck-health = "quantcheck.health_watchdog:main"
 quantcheck-official-mail = "quantcheck.official_mail_forwarder:main"
+quantcheck-recipients = "quantcheck.recipients:main"
 
 [tool.setuptools.packages.find]
 include = ["quantcheck*"]

@@ -45,6 +45,19 @@ NOTIFY_ADMIN_EMAIL_TO=admin@example.com
 
 Do not put friends or subscriber-only readers in the admin recipient list; admin mail can include tracebacks and site-change diagnostics. If admin recipients are not configured, operator alerts are logged but are not sent to subscribers.
 
+Use the recipient-management command for day-to-day changes instead of editing files by hand:
+
+```bash
+quantcheck-recipients check
+quantcheck-recipients list
+quantcheck-recipients add user@example.com
+quantcheck-recipients add --role admin operator@example.com
+quantcheck-recipients remove old@example.com --dry-run
+quantcheck-recipients remove old@example.com
+```
+
+The command validates email syntax, normalizes casing, avoids duplicate entries, keeps subscriber and admin files separate, shows the final route counts, and writes a timestamped `.bak` copy before changing an existing list. Use `--dry-run` first when removing users or making a batch change.
+
 SMTP:
 
 ```env

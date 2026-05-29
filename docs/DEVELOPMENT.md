@@ -19,6 +19,7 @@ quantcheck/
                          IMAP detection and forwarding of official Quant GT mail
   health_watchdog.py     stale/failure health alerting
   gmail_api_notify.py    SMTP and Gmail API delivery
+  recipients.py          safe CLI for subscriber/admin recipient files
 scripts/
   install.sh             virtualenv install and Playwright browser install
   run-daemon.sh          local daemon launcher
