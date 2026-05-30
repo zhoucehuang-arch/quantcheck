@@ -279,7 +279,7 @@ def expand_and_attach_details(page, rows: List[Dict[str, Any]], mode: str) -> Li
       const out = {
         current_price: (txt.match(/^\$[0-9.,]+/)||[''])[0],
         chart_return: (txt.match(/([+-][0-9.]+%) ·/)||['',''])[1],
-        buy_or_entry_price: get('Buy price:', ['P/E (TTM)', 'Market Cap']) || get('Entry price:', ['P/E (TTM)', 'Market Cap']),
+        buy_or_entry_price: get('Buy price:', ['P/E (TTM)', 'Market Cap']) || get('Entry price:', ['P/E (TTM)', 'Market Cap']) || ((txt.match(new RegExp('\\b' + sym.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + '\\s*:\\s*(\\$[0-9.,]+)')) || ['', ''])[1]),
         pe_ttm: get('P/E (TTM)', ['Market Cap']),
         market_cap: get('Market Cap', ['Revenue (TTM)']),
         revenue_ttm: get('Revenue (TTM)', ['Revenue Growth (YoY)']),

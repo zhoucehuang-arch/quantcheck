@@ -59,6 +59,12 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "incomplete detail rows"):
             validate_member_picks_data(data)
 
+    def test_weekly_detail_without_buy_price_passes_when_other_details_loaded(self):
+        data = valid_capture()
+        data["weekly"]["rows"][0]["buy_or_entry_price"] = ""
+
+        validate_member_picks_data(data)
+
     def test_new_layout_without_detail_rows_passes(self):
         data = {
             "monthly": {"pick_date": "May Holdings 05/01/26 - now", "rows": [valid_monthly_row()]},

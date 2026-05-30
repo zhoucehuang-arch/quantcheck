@@ -37,7 +37,10 @@ def validate_member_picks_data(data: Dict[str, Any]) -> None:
     if bad_monthly:
         raise RuntimeError("logged-in monthly picks validation failed: incomplete loaded rows: " + "; ".join(bad_monthly[:5]))
 
-    required_weekly_detail_fields = ["symbol", "company", "current_price", "buy_or_entry_price", "sector", "gt_score", "next_earnings", "analyst_signal"]
+    # Newer Quant GT weekly detail panels may omit buy/entry price for some
+    # picks, while still rendering the rest of the authenticated detail data.
+    # Keep the quality gate focused on fields that indicate real detail loading.
+    required_weekly_detail_fields = ["symbol", "company", "current_price", "sector", "gt_score", "next_earnings", "analyst_signal"]
     complete_detail_rows = [
         row for row in weekly_rows
         if all(row.get(field) not in (None, "") for field in required_weekly_detail_fields)
