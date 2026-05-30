@@ -35,7 +35,7 @@ def valid_capture():
         "monthly": {"pick_date": "May 2026", "rows": [valid_monthly_row()]},
         "weekly": {
             "pick_date": "05/22/26",
-            "rows": [valid_weekly_row()],
+            "rows": [valid_weekly_row(f"W{i}") for i in range(1, 11)],
         },
     }
 
@@ -70,11 +70,18 @@ class ValidationTests(unittest.TestCase):
             "monthly": {"pick_date": "May Holdings 05/01/26 - now", "rows": [valid_monthly_row()]},
             "weekly": {
                 "pick_date": "05/22/26",
-                "rows": [valid_weekly_row()],
+                "rows": [valid_weekly_row(f"W{i}") for i in range(1, 11)],
             },
         }
 
         validate_member_picks_data(data)
+
+    def test_partial_weekly_top10_capture_is_rejected(self):
+        data = valid_capture()
+        data["weekly"]["rows"] = [valid_weekly_row("BKR")]
+
+        with self.assertRaisesRegex(RuntimeError, "expected near-complete Weekly Top 10"):
+            validate_member_picks_data(data)
 
 
 if __name__ == "__main__":

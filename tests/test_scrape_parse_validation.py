@@ -39,16 +39,19 @@ class ScrapeParseAndValidationTests(unittest.TestCase):
             },
             "weekly": {
                 "pick_date": "Week of May 25, 2026",
-                "rows": [{
-                    "symbol": "SNDK",
-                    "company": "Sandisk Corporation",
-                    "current_price": "$1,589.55",
-                    "buy_or_entry_price": "$1,431.67",
-                    "sector": "Electronic Technology",
-                    "gt_score": "5.01/5",
-                    "next_earnings": "Aug 13, 2026",
-                    "analyst_signal": "Strong Buy +0.51",
-                }],
+                "rows": [
+                    {
+                        "symbol": f"W{i}",
+                        "company": "Weekly One Inc.",
+                        "current_price": "$1,589.55",
+                        "buy_or_entry_price": "$1,431.67",
+                        "sector": "Electronic Technology",
+                        "gt_score": "5.01/5",
+                        "next_earnings": "Aug 13, 2026",
+                        "analyst_signal": "Strong Buy +0.51",
+                    }
+                    for i in range(1, 11)
+                ],
             },
         }
 

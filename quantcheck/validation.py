@@ -20,6 +20,8 @@ def validate_member_picks_data(data: Dict[str, Any]) -> None:
     demo_symbol_set = {"SNDK", "LITE", "AAOI", "FORM", "VIAV", "ENPH"}
     if weekly_date == "05/15/26" and demo_symbol_set.issubset(set(weekly_symbols)):
         raise RuntimeError("rejected unauthenticated/demo Weekly Picks signature: 05/15/26")
+    if len(weekly_rows) < 8:
+        raise RuntimeError(f"logged-in weekly picks validation failed: expected near-complete Weekly Top 10, captured {len(weekly_rows)} rows")
     if len(generic_detail_rows) >= max(3, len(weekly_rows) // 2):
         raise RuntimeError("rejected unauthenticated/demo Weekly Picks signature: generic placeholder details")
     if len(weekly_rows) >= 5 and len(current_prices) == 1 and "$184.62" in current_prices:

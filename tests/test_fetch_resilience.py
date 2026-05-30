@@ -13,6 +13,19 @@ from quantcheck import picks_check
 from quantcheck.notify_routes import EmailRoute
 
 
+def weekly_row(symbol="W1"):
+    return {
+        "symbol": symbol,
+        "company": "Weekly One Inc.",
+        "current_price": "$10.00",
+        "buy_or_entry_price": "$9.50",
+        "sector": "Technology",
+        "gt_score": "4.20/5",
+        "next_earnings": "2026-06-01",
+        "analyst_signal": "Buy +0.20",
+    }
+
+
 VALID_DATA = {
     "fetched_at": "2026-05-27T14:30:00",
     "source": "https://quantgt.io",
@@ -34,18 +47,7 @@ VALID_DATA = {
     },
     "weekly": {
         "pick_date": "Week of May 25, 2026",
-        "rows": [
-            {
-                "symbol": "W1",
-                "company": "Weekly One Inc.",
-                "current_price": "$10.00",
-                "buy_or_entry_price": "$9.50",
-                "sector": "Technology",
-                "gt_score": "4.20/5",
-                "next_earnings": "2026-06-01",
-                "analyst_signal": "Buy +0.20",
-            }
-        ],
+        "rows": [weekly_row(f"W{i}") for i in range(1, 11)],
     },
 }
 
