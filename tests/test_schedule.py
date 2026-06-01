@@ -18,14 +18,25 @@ class ScheduleTests(unittest.TestCase):
     def test_empty_schedule_uses_non_trading_day_default(self):
         self.assertEqual(parse_schedule("", current_date=date(2026, 5, 30)), NON_TRADING_DAY_SCHEDULE)
 
-    def test_trading_day_schedule_is_premarket_twice_and_postmarket_once(self):
+    def test_trading_day_schedule_matches_operational_scan_plan(self):
         self.assertEqual(
             TRADING_DAY_SCHEDULE,
-            [(8, 30, "picks"), (9, 0, "picks"), (17, 0, "picks")],
+            [
+                (8, 20, "official_mail"),
+                (8, 30, "picks"),
+                (8, 45, "health_site"),
+                (9, 0, "picks"),
+                (9, 20, "official_mail"),
+                (9, 40, "picks"),
+                (12, 0, "official_mail"),
+                (17, 0, "picks"),
+                (17, 15, "health_site"),
+                (17, 30, "official_mail"),
+            ],
         )
 
-    def test_non_trading_day_schedule_is_once_daily(self):
-        self.assertEqual(NON_TRADING_DAY_SCHEDULE, [(12, 0, "picks")])
+    def test_non_trading_day_schedule_runs_daily_picks_and_mail(self):
+        self.assertEqual(NON_TRADING_DAY_SCHEDULE, [(12, 0, "picks"), (12, 20, "official_mail")])
 
     def test_custom_schedule_parses_kinds(self):
         self.assertEqual(

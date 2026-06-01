@@ -7,16 +7,22 @@ import pandas_market_calendars as mcal
 
 TRADING_DAY_SCHEDULE = [
     # US regular open is 09:30 America/New_York.
-    # Run two premarket scans: 1 hour and 30 minutes before open.
+    (8, 20, "official_mail"),
     (8, 30, "picks"),
+    (8, 45, "health_site"),
     (9, 0, "picks"),
-    # One postmarket scan after the regular close.
+    (9, 20, "official_mail"),
+    (9, 40, "picks"),
+    (12, 0, "official_mail"),
     (17, 0, "picks"),
+    (17, 15, "health_site"),
+    (17, 30, "official_mail"),
 ]
 
 NON_TRADING_DAY_SCHEDULE = [
     # Weekends and market holidays: one midday sweep is enough.
     (12, 0, "picks"),
+    (12, 20, "official_mail"),
 ]
 
 VALID_KINDS = {"picks", "health_site", "health", "official_mail"}

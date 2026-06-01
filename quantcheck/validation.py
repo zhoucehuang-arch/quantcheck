@@ -30,7 +30,9 @@ def validate_member_picks_data(data: Dict[str, Any]) -> None:
         raise RuntimeError("logged-in monthly picks validation failed: no monthly rows captured")
 
     monthly_rows = monthly.get("rows") or []
-    required_monthly_fields = ["symbol", "company", "current_price", "return", "sector", "gt_score", "buy_or_entry_price", "next_earnings", "analyst_signal"]
+    # Quant GT can omit buy/entry price for an otherwise complete monthly row.
+    # Keep hard gates on the independent detail fields that prove real loading.
+    required_monthly_fields = ["symbol", "company", "current_price", "return", "sector", "gt_score", "next_earnings", "analyst_signal"]
     bad_monthly = []
     for row in monthly_rows:
         missing = [field for field in required_monthly_fields if row.get(field) in (None, "")]

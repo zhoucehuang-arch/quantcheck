@@ -59,6 +59,19 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "incomplete detail rows"):
             validate_member_picks_data(data)
 
+    def test_monthly_detail_without_buy_price_passes_when_other_details_loaded(self):
+        data = valid_capture()
+        data["monthly"]["rows"][0]["buy_or_entry_price"] = ""
+
+        validate_member_picks_data(data)
+
+    def test_monthly_missing_loaded_detail_field_is_rejected(self):
+        data = valid_capture()
+        data["monthly"]["rows"][0]["analyst_signal"] = ""
+
+        with self.assertRaisesRegex(RuntimeError, "incomplete loaded rows"):
+            validate_member_picks_data(data)
+
     def test_weekly_detail_without_buy_price_passes_when_other_details_loaded(self):
         data = valid_capture()
         data["weekly"]["rows"][0]["buy_or_entry_price"] = ""
