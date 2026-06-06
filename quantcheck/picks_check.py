@@ -486,6 +486,32 @@ def ensure_login(page, env: Dict[str, str]):
     report.assert_authenticated_page(page, 'monthly')
 
 
+def _wait_for_screenshot_ready(page, name: str) -> None:
+    """Wait for the page to finish hydrating before taking an email screenshot.
+
+    Playwright's full_page screenshot uses the document height at capture time. On
+    Quant GT weekly picks the shell/table can appear first at ~1200px tall, then
+    the full Top 10 list and expanded detail row hydrate a second or two later at
+    ~1800px. Capturing immediately produced truncated weekly attachments.
+    """
+    report.wait_for_picks_content(page)
+    rows = report.wait_for_parsable_picks_rows(page, name)
+    if name == 'weekly' and len(rows) < 10:
+        raise RuntimeError(f'weekly screenshot not ready: expected 10 parsed rows, got {len(rows)}')
+    page.wait_for_function(
+        """(mode) => {
+          const height = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+          if (mode === 'weekly') return height > window.innerHeight + 400;
+          return height >= window.innerHeight;
+        }""",
+        arg=name,
+        timeout=20000,
+    )
+    # One final short beat lets charts/expanded detail finish layout after the
+    # row-count and document-height gates are satisfied.
+    page.wait_for_timeout(1000)
+
+
 def capture_logged_in_screenshots(which: List[str]) -> Dict[str, Path]:
     env = load_env()
     ts = datetime.now(NY).strftime('%Y-%m-%d_%H%M%S')
@@ -504,8 +530,8 @@ def capture_logged_in_screenshots(which: List[str]) -> Dict[str, Path]:
                 page.wait_for_load_state('load', timeout=15000)
             except PlaywrightTimeoutError:
                 pass
-            page.wait_for_timeout(3000)
-            report.wait_for_picks_content(page)
+            page.wait_for_timeout(1500)
+            _wait_for_screenshot_ready(page, name)
             report.assert_authenticated_page(page, name)
             path = SHOTS / f'{name}_picks_{ts}.png'
             page.screenshot(path=str(path), full_page=True)

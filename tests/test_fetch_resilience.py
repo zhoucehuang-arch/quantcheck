@@ -118,6 +118,45 @@ class FetchResilienceTests(unittest.TestCase):
         self.assertIsNotNone(sent[0]["html_body"])
         self.assertIn("Quant GT Monitor", sent[0]["html_body"])
         self.assertIn("monthly rows stayed empty", sent[0]["html_body"])
+    def test_weekly_screenshot_ready_requires_full_top_10_before_capture(self):
+        class FakePage:
+            def __init__(self):
+                self.wait_calls = []
+
+            def wait_for_function(self, script, arg=None, timeout=None):
+                self.wait_calls.append({"script": script, "arg": arg, "timeout": timeout})
+
+            def wait_for_timeout(self, ms):
+                self.wait_calls.append({"timeout_ms": ms})
+
+        page = FakePage()
+        rows = [{"symbol": f"W{i}", "gt_score": "4.0/5"} for i in range(10)]
+
+        with patch.object(picks_check.report, "wait_for_picks_content") as wait_content, \
+             patch.object(picks_check.report, "wait_for_parsable_picks_rows", return_value=rows) as wait_rows:
+            picks_check._wait_for_screenshot_ready(page, "weekly")
+
+        wait_content.assert_called_once_with(page)
+        wait_rows.assert_called_once_with(page, "weekly")
+        self.assertEqual(page.wait_calls[0]["arg"], "weekly")
+        self.assertEqual(page.wait_calls[0]["timeout"], 20000)
+        self.assertIn("height > window.innerHeight + 400", page.wait_calls[0]["script"])
+        self.assertEqual(page.wait_calls[1], {"timeout_ms": 1000})
+
+    def test_weekly_screenshot_ready_rejects_partial_weekly_rows(self):
+        class FakePage:
+            def wait_for_function(self, *args, **kwargs):
+                raise AssertionError("should not wait for screenshot when parsed rows are partial")
+
+            def wait_for_timeout(self, ms):
+                raise AssertionError("should not sleep when parsed rows are partial")
+
+        rows = [{"symbol": f"W{i}", "gt_score": "4.0/5"} for i in range(5)]
+
+        with patch.object(picks_check.report, "wait_for_picks_content"), \
+             patch.object(picks_check.report, "wait_for_parsable_picks_rows", return_value=rows):
+            with self.assertRaisesRegex(RuntimeError, "expected 10 parsed rows"):
+                picks_check._wait_for_screenshot_ready(FakePage(), "weekly")
 
 
 if __name__ == "__main__":

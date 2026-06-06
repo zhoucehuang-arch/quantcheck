@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, Iterable, List
 
 
-MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
+MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec"
 KNOWN_DETAIL_LABELS = [
     "Buy price:",
     "Entry price:",
@@ -69,6 +69,12 @@ def extract_pick_date(text: str, mode: str) -> str:
         if match:
             return match.group(0)
     else:
+        match = re.search(rf"\bUpdated\s+on\s+(?:{MONTHS})\s+\d{{1,2}},\s+\d{{4}}\b", clean, re.I)
+        if match:
+            return match.group(0)
+        match = re.search(rf"\bUpdated\s+(?:{MONTHS})\s+\d{{1,2}},\s+\d{{4}}\b", clean, re.I)
+        if match:
+            return match.group(0)
         match = re.search(rf"\bWeek\s+of\s+(?:{MONTHS})\s+\d{{1,2}},\s+\d{{4}}\b", clean, re.I)
         if match:
             return match.group(0)

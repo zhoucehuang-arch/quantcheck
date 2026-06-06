@@ -88,6 +88,15 @@ class ScrapeParseTests(unittest.TestCase):
         text = "Weekly Picks Guidance only Week of May 25, 2026 COMPANY SYMBOL SECTOR"
 
         self.assertEqual(extract_pick_date(text, "weekly"), "Week of May 25, 2026")
+    def test_weekly_updated_on_abbreviated_date_is_supported(self):
+        text = "Weekly Picks Guidance only Updated on Jun 5, 2026 WTD return +0.00% COMPANY SYMBOL"
+
+        self.assertEqual(extract_pick_date(text, "weekly"), "Updated on Jun 5, 2026")
+
+    def test_weekly_updated_abbreviated_date_is_supported(self):
+        text = "Weekly Picks Updated Jun 5, 2026 COMPANY SYMBOL"
+
+        self.assertEqual(extract_pick_date(text, "weekly"), "Updated Jun 5, 2026")
 
 
 if __name__ == "__main__":
