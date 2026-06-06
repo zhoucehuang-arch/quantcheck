@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import mimetypes
 import os
+import re
 import smtplib
 import ssl
 import traceback
@@ -135,9 +136,19 @@ def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None =
     token_path = Path(os.environ.get("GMAIL_API_TOKEN", ROOT / ".config" / "gmail-api" / "token.json"))
     if not (recipients and sender and token_path.exists()):
         return False
-    scopes = [
+    base_scopes = [
         "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose",
     ]
+    raw_scopes = os.environ.get("GMAIL_API_SCOPES") or os.environ.get("OFFICIAL_MAIL_GMAIL_SCOPES")
+    scopes = list(base_scopes)
+    if raw_scopes:
+        for item in re.split(r"[,;\s]+", raw_scopes):
+            item = item.strip()
+            if item and item not in scopes:
+                scopes.append(item)
     try:
         creds = Credentials.from_authorized_user_file(str(token_path), scopes)
         if creds.expired and creds.refresh_token:
