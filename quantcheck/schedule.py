@@ -14,6 +14,7 @@ TRADING_DAY_SCHEDULE = [
     (9, 20, "official_mail"),
     (9, 40, "picks"),
     (12, 0, "official_mail"),
+    (12, 40, "daily_admin_status"),
     (17, 0, "picks"),
     (17, 15, "health_site"),
     (17, 30, "official_mail"),
@@ -23,9 +24,10 @@ NON_TRADING_DAY_SCHEDULE = [
     # Weekends and market holidays: one midday sweep is enough.
     (12, 0, "picks"),
     (12, 20, "official_mail"),
+    (12, 40, "daily_admin_status"),
 ]
 
-VALID_KINDS = {"picks", "health_site", "health", "official_mail"}
+VALID_KINDS = {"picks", "health_site", "health", "official_mail", "daily_admin_status"}
 
 
 @lru_cache(maxsize=8)

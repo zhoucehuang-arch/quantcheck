@@ -29,19 +29,23 @@ class ScheduleTests(unittest.TestCase):
                 (9, 20, "official_mail"),
                 (9, 40, "picks"),
                 (12, 0, "official_mail"),
+                (12, 40, "daily_admin_status"),
                 (17, 0, "picks"),
                 (17, 15, "health_site"),
                 (17, 30, "official_mail"),
             ],
         )
 
-    def test_non_trading_day_schedule_runs_daily_picks_and_mail(self):
-        self.assertEqual(NON_TRADING_DAY_SCHEDULE, [(12, 0, "picks"), (12, 20, "official_mail")])
+    def test_non_trading_day_schedule_runs_daily_picks_mail_and_admin_status(self):
+        self.assertEqual(
+            NON_TRADING_DAY_SCHEDULE,
+            [(12, 0, "picks"), (12, 20, "official_mail"), (12, 40, "daily_admin_status")],
+        )
 
     def test_custom_schedule_parses_kinds(self):
         self.assertEqual(
-            parse_schedule("08:20:official_mail,08:30:picks,17:15:health_site"),
-            [(8, 20, "official_mail"), (8, 30, "picks"), (17, 15, "health_site")],
+            parse_schedule("08:20:official_mail,08:30:picks,12:40:daily_admin_status,17:15:health_site"),
+            [(8, 20, "official_mail"), (8, 30, "picks"), (12, 40, "daily_admin_status"), (17, 15, "health_site")],
         )
 
     def test_invalid_schedule_kind_is_rejected(self):

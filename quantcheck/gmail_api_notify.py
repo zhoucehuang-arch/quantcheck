@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import mimetypes
 import os
 import re
 import smtplib
 import ssl
+import tempfile
 import traceback
 from email.message import EmailMessage
 from pathlib import Path
@@ -84,6 +86,45 @@ def _build_message(sender: str, recipients: list[str], subject: str, body: str, 
     return msg
 
 
+def _token_lock_path(token_path: Path) -> Path:
+    return token_path.with_name(token_path.name + ".lock")
+
+
+def _atomic_write_text(path: Path, content: str, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(path.parent), delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+    os.replace(tmp_path, path)
+    try:
+        path.chmod(mode)
+    except Exception:
+        pass
+
+
+def refresh_gmail_credentials(token_path: Path, scopes: list[str]):
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
+    lock_path = _token_lock_path(token_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle, fcntl.LOCK_EX)
+        creds = Credentials.from_authorized_user_file(str(token_path), scopes)
+        if creds.expired and creds.refresh_token:
+            old_text = token_path.read_text(encoding="utf-8") if token_path.exists() else ""
+            creds.refresh(Request())
+            refreshed = creds.to_json()
+            if refreshed != old_text:
+                backup_dir = token_path.parent / "backup"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                stamp = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                backup_path = backup_dir / f"{token_path.stem}.pre_refresh.{stamp}.json"
+                _atomic_write_text(backup_path, old_text or refreshed)
+                _atomic_write_text(token_path, refreshed)
+        return creds
+
+
 def send_via_smtp(subject: str, body: str, to: str | Iterable[str] | None = None, attachments: Iterable[Path] | None = None, timeout: int = 30, html: str | None = None) -> bool:
     recipients = parse_recipients(to) if to is None else parse_recipients(to, file_path="")
     host = os.environ.get("SMTP_HOST", "")
@@ -152,8 +193,7 @@ def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None =
     try:
         creds = Credentials.from_authorized_user_file(str(token_path), scopes)
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            token_path.write_text(creds.to_json(), encoding="utf-8")
+            creds = refresh_gmail_credentials(token_path, scopes)
         if not creds.valid:
             return False
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)

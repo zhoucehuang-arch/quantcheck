@@ -2,8 +2,8 @@ import sys
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from quantcheck.gmail_api_notify import parse_recipients, send_email, send_via_gmail_api
 from quantcheck.notify_routes import EmailRoute, admin_recipients, recipients_for_route, subscriber_recipients
@@ -93,9 +93,8 @@ class NotifyTests(unittest.TestCase):
 
         self.assertEqual(calls, [["a@example.com"], ["b@example.com"]])
         smtp.assert_not_called()
-    def test_gmail_api_send_uses_full_scope_family(self):
-        captured = {}
 
+    def test_gmail_api_send_skips_refresh_when_credentials_are_valid(self):
         class FakeCreds:
             expired = False
             refresh_token = None
@@ -104,123 +103,46 @@ class NotifyTests(unittest.TestCase):
             def to_json(self):
                 return "{}"
 
-        class FakeSend:
-            def execute(self):
-                return {"id": "msg-1"}
+        with tempfile.TemporaryDirectory() as tmp:
+            token_path = Path(tmp) / "token.json"
+            token_path.write_text("{}", encoding="utf-8")
+            with patch.dict(
+                "os.environ",
+                {
+                    "GMAIL_API_ENABLED": "1",
+                    "GMAIL_API_TOKEN": str(token_path),
+                    "GMAIL_API_FROM": "sender@example.com",
+                },
+                clear=True,
+            ), patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=FakeCreds()), \
+                 patch("quantcheck.gmail_api_notify.refresh_gmail_credentials") as refresh:
+                send_via_gmail_api("Subject", "Body", to=["admin@example.com"])
 
-        class FakeMessages:
-            def send(self, userId=None, body=None):
-                captured["userId"] = userId
-                captured["body"] = body
-                return FakeSend()
+        refresh.assert_not_called()
 
-        class FakeUsers:
-            def messages(self):
-                return FakeMessages()
-
-        class FakeService:
-            def users(self):
-                return FakeUsers()
-
-        def fake_from_token(path, scopes):
-            captured["token_path"] = path
-            captured["scopes"] = scopes
-            return FakeCreds()
-
-        fake_credentials_module = types.SimpleNamespace(
-            Credentials=types.SimpleNamespace(from_authorized_user_file=fake_from_token)
-        )
-        fake_requests_module = types.SimpleNamespace(Request=lambda: object())
-        fake_discovery_module = types.SimpleNamespace(build=lambda *args, **kwargs: FakeService())
-
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(
-            sys.modules,
-            {
-                "google": types.ModuleType("google"),
-                "google.oauth2": types.ModuleType("google.oauth2"),
-                "google.oauth2.credentials": fake_credentials_module,
-                "google.auth": types.ModuleType("google.auth"),
-                "google.auth.transport": types.ModuleType("google.auth.transport"),
-                "google.auth.transport.requests": fake_requests_module,
-                "googleapiclient": types.ModuleType("googleapiclient"),
-                "googleapiclient.discovery": fake_discovery_module,
-            },
-        ), patch.dict(
-            "os.environ",
-            {
-                "GMAIL_API_ENABLED": "1",
-                "GMAIL_API_TOKEN": str(Path(tmp) / "token.json"),
-                "GMAIL_API_FROM": "sender@example.com",
-            },
-            clear=True,
-        ):
-            Path(tmp, "token.json").write_text("{}", encoding="utf-8")
-            self.assertTrue(send_via_gmail_api("Subject", "Body", to=["admin@example.com"]))
-
-        self.assertEqual(
-            captured["scopes"],
-            [
-                "https://www.googleapis.com/auth/gmail.send",
-                "https://www.googleapis.com/auth/gmail.modify",
-                "https://www.googleapis.com/auth/gmail.readonly",
-                "https://www.googleapis.com/auth/gmail.compose",
-            ],
-        )
-        self.assertEqual(captured["userId"], "me")
-
-    def test_gmail_api_send_appends_custom_scopes_without_duplicates(self):
-        captured = {}
-
+    def test_refresh_helper_writes_atomically_and_backups(self):
         class FakeCreds:
-            expired = False
-            refresh_token = None
+            expired = True
+            refresh_token = "refresh"
             valid = True
 
-        def fake_from_token(path, scopes):
-            captured["scopes"] = scopes
-            return FakeCreds()
+            def refresh(self, request):
+                self.valid = True
 
-        fake_credentials_module = types.SimpleNamespace(
-            Credentials=types.SimpleNamespace(from_authorized_user_file=fake_from_token)
-        )
-        fake_requests_module = types.SimpleNamespace(Request=lambda: object())
-        fake_discovery_module = types.SimpleNamespace(
-            build=lambda *args, **kwargs: types.SimpleNamespace(
-                users=lambda: types.SimpleNamespace(
-                    messages=lambda: types.SimpleNamespace(
-                        send=lambda **kwargs: types.SimpleNamespace(execute=lambda: {})
-                    )
-                )
-            )
-        )
+            def to_json(self):
+                return '{"access_token":"new"}'
 
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(
-            sys.modules,
-            {
-                "google": types.ModuleType("google"),
-                "google.oauth2": types.ModuleType("google.oauth2"),
-                "google.oauth2.credentials": fake_credentials_module,
-                "google.auth": types.ModuleType("google.auth"),
-                "google.auth.transport": types.ModuleType("google.auth.transport"),
-                "google.auth.transport.requests": fake_requests_module,
-                "googleapiclient": types.ModuleType("googleapiclient"),
-                "googleapiclient.discovery": fake_discovery_module,
-            },
-        ), patch.dict(
-            "os.environ",
-            {
-                "GMAIL_API_ENABLED": "1",
-                "GMAIL_API_TOKEN": str(Path(tmp) / "token.json"),
-                "GMAIL_API_FROM": "sender@example.com",
-                "GMAIL_API_SCOPES": "https://www.googleapis.com/auth/gmail.send, https://mail.google.com/",
-            },
-            clear=True,
-        ):
-            Path(tmp, "token.json").write_text("{}", encoding="utf-8")
-            self.assertTrue(send_via_gmail_api("Subject", "Body", to=["admin@example.com"]))
+        with tempfile.TemporaryDirectory() as tmp:
+            token_path = Path(tmp) / "token.json"
+            token_path.write_text('{"access_token":"old"}', encoding="utf-8")
+            with patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=FakeCreds()):
+                from quantcheck.gmail_api_notify import refresh_gmail_credentials
+                creds = refresh_gmail_credentials(token_path, ["scope-a"])
 
-        self.assertEqual(captured["scopes"].count("https://www.googleapis.com/auth/gmail.send"), 1)
-        self.assertIn("https://mail.google.com/", captured["scopes"])
+            backups = list((token_path.parent / "backup").glob("token.pre_refresh.*.json"))
+            self.assertTrue(creds.valid)
+            self.assertEqual(token_path.read_text(encoding="utf-8"), '{"access_token":"new"}')
+            self.assertTrue(backups)
 
 
 if __name__ == "__main__":

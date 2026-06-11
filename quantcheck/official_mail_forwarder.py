@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Iterable, List, Mapping
 
 from quantcheck.config import load_env
-from quantcheck.gmail_api_notify import send_email as deliver_email
+from quantcheck.gmail_api_notify import refresh_gmail_credentials, send_email as deliver_email
 from quantcheck.email_templates import build_card_email_html
 from quantcheck.notify_routes import EmailRoute, recipients_for_route, route_label
 from quantcheck.state import atomic_write_json
@@ -296,7 +296,6 @@ def gmail_scopes(env: Mapping[str, str]) -> list[str]:
 def gmail_service(env: Mapping[str, str]):
     try:
         from google.oauth2.credentials import Credentials
-        from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
     except Exception as exc:
         raise RuntimeError("google client libraries are required for Gmail API official mail forwarding") from exc
@@ -307,10 +306,7 @@ def gmail_service(env: Mapping[str, str]):
     if not token_path.exists():
         raise RuntimeError(f"missing Gmail API token: {token_path}")
     scopes = gmail_scopes(env)
-    creds = Credentials.from_authorized_user_file(str(token_path), scopes)
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        token_path.write_text(creds.to_json(), encoding="utf-8")
+    creds = refresh_gmail_credentials(token_path, scopes)
     if not creds.valid:
         raise RuntimeError("Gmail API credentials are not valid")
     return build("gmail", "v1", credentials=creds, cache_discovery=False)

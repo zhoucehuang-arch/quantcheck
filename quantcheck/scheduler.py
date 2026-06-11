@@ -103,6 +103,11 @@ def run_official_mail():
     return run_cmd([sys.executable, "-m", "quantcheck.official_mail_forwarder"], timeout)
 
 
+def run_daily_admin_status():
+    timeout = int(os.environ.get("QUANTCHECK_MAIL_TIMEOUT_SECONDS", "60"))
+    return run_cmd([sys.executable, "-m", "quantcheck.daily_admin_status"], timeout)
+
+
 def run_once(kind: str):
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_FILE.open("w") as lock:
@@ -122,6 +127,8 @@ def run_once(kind: str):
             return run_cmd([sys.executable, "-m", "quantcheck.health_watchdog"], int(os.environ.get("QUANTCHECK_HEALTH_TIMEOUT_SECONDS", "110")))
         if kind == "official_mail":
             return run_official_mail()
+        if kind == "daily_admin_status":
+            return run_daily_admin_status()
         raise SystemExit(f"unknown job kind: {kind}")
 
 
