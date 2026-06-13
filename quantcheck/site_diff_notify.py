@@ -41,6 +41,24 @@ def is_capture_error_page(page: dict | None) -> bool:
     return not has_signal
 
 
+# External news/markets feeds that several Quant GT pages embed as an
+# auto-refreshing ticker. Their links rotate every few minutes and are not a
+# site/function change, so they must never trigger an alert.
+NEWS_HOST_MARKERS = (
+    'finance.yahoo.com',
+    'yahoo.com/m/',
+    'fool.com',
+    'cnbc.com',
+    'seekingalpha.com',
+    'marketwatch.com',
+    'reuters.com',
+    'bloomberg.com',
+    'investors.com',
+)
+# Relative timestamps like "7m ago" / "11h ago" / "15h ago" mark a news ticker item.
+NEWS_AGE_RE = re.compile(r'\b\d+\s*(?:m|h|d|min|mins|hour|hours|day|days)\s+ago\b', re.I)
+
+
 def is_noise_item(page_name: str, key: str, item) -> bool:
     """Return True for dynamic content that should not trigger user alerts."""
     if page_name == 'market_tools':
@@ -48,14 +66,13 @@ def is_noise_item(page_name: str, key: str, item) -> bool:
         # noisy. Treat its content diffs as non-actionable; separate health
         # checks cover scraper/login failures.
         return True
-    if page_name == 'market_tools' and key == 'links':
-        text = href = ''
-        if isinstance(item, tuple) and len(item) >= 2:
-            text, href = str(item[0] or ''), str(item[1] or '')
-        else:
-            text = str(item or '')
-        combined = f'{text} {href}'
-        if 'cnbc.com/' in combined or re.search(r'\b\d+\s*(m|h|d)\s+ago', combined, re.I):
+    if key == 'links':
+        # `item` arrives already stringified (e.g. "('headline 7m ago', 'https://...')"),
+        # so a substring match over the whole value covers both text and href.
+        combined = str(item or '')
+        if any(host in combined for host in NEWS_HOST_MARKERS):
+            return True
+        if NEWS_AGE_RE.search(combined):
             return True
     return False
 

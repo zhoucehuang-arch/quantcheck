@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Iterable, List, Mapping
 
 from quantcheck.config import load_env
-from quantcheck.gmail_api_notify import refresh_gmail_credentials, send_email as deliver_email
+from quantcheck.gmail_api_notify import refresh_gmail_credentials, send_email_per_recipient as deliver_email
 from quantcheck.email_templates import build_card_email_html
 from quantcheck.notify_routes import EmailRoute, recipients_for_route, route_label
 from quantcheck.state import atomic_write_json
@@ -262,12 +262,14 @@ def send_admin_alert(env: Mapping[str, str], subject: str, body: str) -> bool:
         ],
         context="official mail monitor alert",
     )
-    sent = deliver_email(subject, body, to=recipients, html=html)
-    if sent:
-        log(f"admin alert sent to {', '.join(recipients)}: {subject}")
-    else:
+    delivered, failed = deliver_email(subject, body, to=recipients, html=html)
+    if delivered:
+        log(f"admin alert sent to {', '.join(delivered)}: {subject}")
+    if failed:
+        log(f"admin alert FAILED for {len(failed)} recipient(s): {', '.join(failed)}: {subject}")
+    if not delivered and not failed:
         log(f"admin alert send failed: {subject}")
-    return sent
+    return bool(delivered)
 
 
 def alert_forward_failures(env: Mapping[str, str], result: Mapping[str, object]) -> bool:
@@ -388,10 +390,13 @@ def _forward_mails(mails: Iterable[OfficialMail], env: Mapping[str, str], recipi
             continue
         subject, body, html = build_forward_body(mail)
         if not dry_run:
-            sent = deliver_email(subject, body, to=recipients, html=html)
-            if not sent:
+            delivered, failed = deliver_email(subject, body, to=recipients, html=html)
+            if failed:
                 result["failed"] += 1
-                log(f"official mail send failed provider={provider} uid={mail.uid} subject={mail.subject!r}")
+                log(f"official mail delivery FAILED for {len(failed)} recipient(s) provider={provider} uid={mail.uid}: {', '.join(failed)} subject={mail.subject!r}")
+            if failed or not delivered:
+                if not delivered:
+                    log(f"official mail send failed provider={provider} uid={mail.uid} subject={mail.subject!r}")
                 continue
             _record_forward(state, forwarded, fingerprint, mail, provider)
         result["forwarded"] += 1

@@ -9,6 +9,7 @@ import smtplib
 import ssl
 import tempfile
 import traceback
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable, List
@@ -25,6 +26,16 @@ def _log_failure(context: str, exc: Exception | str) -> None:
             detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
         with LOG_FILE.open("a", encoding="utf-8") as handle:
             handle.write(f"{context}: {detail}\n")
+    except Exception:
+        pass
+
+
+def _log_line(message: str) -> None:
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).isoformat()
+        with LOG_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{ts}] {message}\n")
     except Exception:
         pass
 
@@ -206,13 +217,33 @@ def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None =
         return False
 
 
+def send_email_per_recipient(
+    subject: str,
+    body: str,
+    to: str | Iterable[str] | None = None,
+    attachments: Iterable[Path] | None = None,
+    html: str | None = None,
+    retries: int = 1,
+) -> tuple[List[str], List[str]]:
+    """Send one private message per recipient, retrying failures so a single bad
+    address never silently drops a subscriber. Returns (delivered, failed)."""
+    recipients = parse_recipients(to) if to is None else parse_recipients(to, file_path="")
+    attachments = list(attachments or [])
+    delivered: list[str] = []
+    failed: list[str] = []
+    for recipient in recipients:
+        sent = False
+        for _ in range(max(1, retries + 1)):
+            sent = send_via_gmail_api(subject, body, to=[recipient], attachments=attachments, html=html) or send_via_smtp(subject, body, to=[recipient], attachments=attachments, html=html)
+            if sent:
+                break
+        (delivered if sent else failed).append(recipient)
+    if failed:
+        _log_line(f"per-recipient delivery FAILED for {len(failed)} recipient(s): {', '.join(failed)}: {subject}")
+    return delivered, failed
+
+
 def send_email(subject: str, body: str, to: str | Iterable[str] | None = None, attachments: Iterable[Path] | None = None, html: str | None = None) -> bool:
     """Send one private message per recipient so subscribers never see each other."""
-    recipients = parse_recipients(to) if to is None else parse_recipients(to, file_path="")
-    if not recipients:
-        return False
-    ok = True
-    for recipient in recipients:
-        sent = send_via_gmail_api(subject, body, to=[recipient], attachments=attachments, html=html) or send_via_smtp(subject, body, to=[recipient], attachments=attachments, html=html)
-        ok = ok and sent
-    return ok
+    delivered, failed = send_email_per_recipient(subject, body, to=to, attachments=attachments, html=html)
+    return bool(delivered) and not failed

@@ -32,7 +32,7 @@ from quantcheck.config import load_env as load_dotenv
 from quantcheck.diff import compare
 from quantcheck import picks_report as report
 from quantcheck.notify_dedupe import should_send_notification
-from quantcheck.gmail_api_notify import send_email as deliver_email
+from quantcheck.gmail_api_notify import send_email_per_recipient as deliver_email
 from quantcheck.email_templates import build_card_email_html
 from quantcheck.notify_routes import EmailRoute, recipients_for_route, route_label
 from quantcheck.state import atomic_write_json, prune_old_files as prune_files
@@ -421,9 +421,12 @@ def send_email(
     if not recipients:
         log(f'email skipped: {route_label(route)} not configured for {subject}')
         return
-    if deliver_email(subject, body, to=recipients, attachments=attachments or [], html=html_body):
-        log(f'email sent via {route.value} to {", ".join(recipients)}: {subject}')
-    else:
+    delivered, failed = deliver_email(subject, body, to=recipients, attachments=attachments or [], html=html_body)
+    if delivered:
+        log(f'email sent via {route.value} to {", ".join(delivered)}: {subject}')
+    if failed:
+        log(f'email FAILED via {route.value} for {len(failed)} recipient(s): {", ".join(failed)}: {subject}')
+    if not delivered and not failed:
         log(f'email send failed or no sender configured: {subject}')
 
 

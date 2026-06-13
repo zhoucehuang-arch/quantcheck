@@ -164,7 +164,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
                 patch("quantcheck.official_mail_forwarder.STATE_FILE", state_file),
                 patch("quantcheck.official_mail_forwarder.list_gmail_messages", side_effect=fake_list),
                 patch("quantcheck.official_mail_forwarder.mark_gmail_message_read", side_effect=fake_mark),
-                patch("quantcheck.official_mail_forwarder.deliver_email", return_value=True) as deliver,
+                patch("quantcheck.official_mail_forwarder.deliver_email", return_value=(["ok@example.com"], [])) as deliver,
             ):
                 first = forward_official_mail(env)
                 second = forward_official_mail(env)
@@ -212,7 +212,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
             with (
                 patch("quantcheck.official_mail_forwarder.STATE_FILE", state_file),
                 patch("quantcheck.official_mail_forwarder.connect_imap", return_value=FakeImap()),
-                patch("quantcheck.official_mail_forwarder.deliver_email", return_value=True) as deliver,
+                patch("quantcheck.official_mail_forwarder.deliver_email", return_value=(["ok@example.com"], [])) as deliver,
             ):
                 first = forward_official_mail(env)
                 second = forward_official_mail(env)
@@ -221,6 +221,54 @@ class OfficialMailForwarderTests(unittest.TestCase):
         self.assertEqual(second["forwarded"], 0)
         deliver.assert_called_once()
         self.assertEqual(deliver.call_args.kwargs["to"], ["friend@example.com", "admin@example.com"])
+
+    def test_forwarder_retries_partial_recipient_failure(self):
+        msg = EmailMessage()
+        msg["From"] = "Quant GT <support@quantgt.io>"
+        msg["Subject"] = "Monthly Picks Updated"
+        msg["Date"] = "Mon, 25 May 2026 08:00:00 +0000"
+        msg.set_content("New monthly picks are available.")
+
+        class FakeImap:
+            def select(self, mailbox, readonly=True):
+                return "OK", []
+
+            def uid(self, command, *args):
+                if command == "search":
+                    return "OK", [b"1"]
+                if command == "fetch":
+                    return "OK", [(b"1 (RFC822 {1}", msg.as_bytes())]
+                raise AssertionError(command)
+
+            def logout(self):
+                return "OK", []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "official_mail_forwarder_state.json"
+            env = {
+                "OFFICIAL_MAIL_ENABLED": "1",
+                "NOTIFY_EMAIL_TO": "friend@example.com",
+                "NOTIFY_EMAIL_FILE": "",
+                "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
+                "NOTIFY_ADMIN_EMAIL_FILE": "",
+                "OFFICIAL_MAIL_IMAP_HOST": "imap.example.com",
+                "OFFICIAL_MAIL_IMAP_USERNAME": "receiver@example.com",
+                "OFFICIAL_MAIL_IMAP_PASSWORD": "secret",
+            }
+            with (
+                patch("quantcheck.official_mail_forwarder.STATE_FILE", state_file),
+                patch("quantcheck.official_mail_forwarder.connect_imap", return_value=FakeImap()),
+                patch("quantcheck.official_mail_forwarder.deliver_email", return_value=(["friend@example.com"], ["admin@example.com"])) as deliver,
+            ):
+                first = forward_official_mail(env)
+                second = forward_official_mail(env)
+
+        self.assertEqual(first["forwarded"], 0)
+        self.assertEqual(first["failed"], 1)
+        self.assertEqual(second["forwarded"], 0)
+        self.assertEqual(second["failed"], 1)
+        self.assertFalse(state_file.exists())
+        self.assertEqual(deliver.call_count, 2)
 
     def test_send_failure_alert_goes_only_to_admins(self):
         msg = EmailMessage()
@@ -257,7 +305,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
             patch.dict("os.environ", env, clear=True),
             patch("quantcheck.official_mail_forwarder.load_env"),
             patch("quantcheck.official_mail_forwarder.connect_imap", return_value=FakeImap()),
-            patch("quantcheck.official_mail_forwarder.deliver_email", side_effect=[False, True]) as deliver,
+            patch("quantcheck.official_mail_forwarder.deliver_email", side_effect=[([], ["friend@example.com", "admin@example.com"]), (["admin@example.com"], [])]) as deliver,
             patch("sys.argv", ["quantcheck-official-mail"]),
         ):
             main()
@@ -284,7 +332,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
             patch.dict("os.environ", env, clear=True),
             patch("quantcheck.official_mail_forwarder.load_env"),
             patch("quantcheck.official_mail_forwarder.connect_imap", side_effect=RuntimeError("imap down")),
-            patch("quantcheck.official_mail_forwarder.deliver_email", return_value=True) as deliver,
+            patch("quantcheck.official_mail_forwarder.deliver_email", return_value=(["ok@example.com"], [])) as deliver,
             patch("sys.argv", ["quantcheck-official-mail"]),
         ):
             with self.assertRaises(RuntimeError):
