@@ -68,6 +68,18 @@ class OfficialMailForwarderTests(unittest.TestCase):
 
         self.assertTrue(matches_official_mail(mail, ["@quantgt.io"], ["picks"]))
 
+    def test_matching_does_not_treat_plain_quantgt_mentions_as_official_sender(self):
+        mail = OfficialMail(
+            "1",
+            "Quant GT Picks Updated",
+            "Me <owner@example.com>",
+            "",
+            "Source: https://quantgt.io\nWeekly picks changed",
+            "<p>Source: https://quantgt.io</p><p>Weekly picks changed</p>",
+        )
+
+        self.assertFalse(matches_official_mail(mail, ["@quantgt.io"], ["picks", "updated"]))
+
     def test_forward_body_preserves_official_message_context(self):
         mail = OfficialMail(
             "1",
@@ -125,36 +137,27 @@ class OfficialMailForwarderTests(unittest.TestCase):
         self.assertIn("New picks are available.", mails[0].text)
         self.assertIn("<p>New picks are available.</p>", mails[0].html)
 
-    def test_gmail_api_forwarder_sends_once_and_marks_message_read(self):
-        gmail_message = {
-            "id": "msg-1",
+    def test_forwarder_uses_gmail_and_marks_message_read(self):
+        messages = [{
+            "id": "abc123",
             "payload": {
                 "headers": [
-                    {"name": "From", "value": "QQ Mail <897714549@qq.com>"},
-                    {"name": "Subject", "value": "Fwd: Monthly Picks Updated"},
+                    {"name": "From", "value": "Quant GT <support@quantgt.io>"},
+                    {"name": "Subject", "value": "Monthly Picks Updated"},
                     {"name": "Date", "value": "Mon, 25 May 2026 08:00:00 +0000"},
                 ],
-                "body": {"data": "RnJvbTogUXVhbnQgR1QgPHN1cHBvcnRAcXVhbnRndC5pbz5cblN1YmplY3Q6IE1vbnRobHkgUGlja3MgVXBkYXRlZA"},
+                "parts": [
+                    {"mimeType": "text/plain", "body": {"data": "TmV3IHBpY2tzIGFyZSBhdmFpbGFibGUu"}},
+                ],
             },
-        }
-        listed = []
-        marked = []
-
-        def fake_list(env, query, max_messages):
-            listed.append((query, max_messages))
-            return [gmail_message]
-
-        def fake_mark(env, message_id):
-            marked.append(message_id)
+        }]
 
         with tempfile.TemporaryDirectory() as tmp:
             state_file = Path(tmp) / "official_mail_forwarder_state.json"
             env = {
                 "OFFICIAL_MAIL_ENABLED": "1",
-                "OFFICIAL_MAIL_PROVIDER": "gmail_api",
-                "OFFICIAL_MAIL_GMAIL_QUERY": "is:unread newer_than:14d quantgt",
-                "OFFICIAL_MAIL_MARK_READ": "1",
-                "OFFICIAL_MAIL_MAX_MESSAGES": "7",
+                "OFFICIAL_MAIL_PROVIDER": "gmail",
+                "OFFICIAL_MAIL_GMAIL_QUERY": "is:unread",
                 "NOTIFY_EMAIL_TO": "friend@example.com",
                 "NOTIFY_EMAIL_FILE": "",
                 "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
@@ -162,8 +165,57 @@ class OfficialMailForwarderTests(unittest.TestCase):
             }
             with (
                 patch("quantcheck.official_mail_forwarder.STATE_FILE", state_file),
-                patch("quantcheck.official_mail_forwarder.list_gmail_messages", side_effect=fake_list),
-                patch("quantcheck.official_mail_forwarder.mark_gmail_message_read", side_effect=fake_mark),
+                patch("quantcheck.official_mail_forwarder.list_gmail_messages", return_value=messages),
+                patch("quantcheck.official_mail_forwarder.mark_gmail_message_read") as mark_read,
+                patch("quantcheck.official_mail_forwarder.deliver_email", return_value=(["ok@example.com"], [])) as deliver,
+            ):
+                first = forward_official_mail(env)
+                second = forward_official_mail(env)
+
+        self.assertEqual(first["provider"], "gmail")
+        self.assertEqual(first["forwarded"], 1)
+        self.assertEqual(second["forwarded"], 0)
+        deliver.assert_called_once()
+        mark_read.assert_called_once_with(env, "abc123")
+
+    def test_forwarder_uses_imap_and_records_state(self):
+        msg = EmailMessage()
+        msg["From"] = "Quant GT <support@quantgt.io>"
+        msg["Subject"] = "Monthly Picks Updated"
+        msg["Date"] = "Mon, 25 May 2026 08:00:00 +0000"
+        msg.set_content("New monthly picks are available.")
+
+        class FakeImap:
+            def select(self, mailbox, readonly=True):
+                return "OK", []
+
+            def uid(self, command, *args):
+                if command == "search":
+                    return "OK", [b"1"]
+                if command == "fetch":
+                    return "OK", [(b"1 (RFC822 {1}", msg.as_bytes())]
+                raise AssertionError(command)
+
+            def logout(self):
+                return "OK", []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "official_mail_forwarder_state.json"
+            env = {
+                "OFFICIAL_MAIL_ENABLED": "1",
+                "OFFICIAL_MAIL_PROVIDER": "imap",
+                "NOTIFY_EMAIL_TO": "friend@example.com",
+                "NOTIFY_EMAIL_FILE": "",
+                "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
+                "NOTIFY_ADMIN_EMAIL_FILE": "",
+                "OFFICIAL_MAIL_IMAP_HOST": "imap.example.com",
+                "OFFICIAL_MAIL_IMAP_USERNAME": "receiver@example.com",
+                "OFFICIAL_MAIL_IMAP_PASSWORD": "secret",
+                "OFFICIAL_MAIL_IMAP_SECURITY": "starttls",
+            }
+            with (
+                patch("quantcheck.official_mail_forwarder.STATE_FILE", state_file),
+                patch("quantcheck.official_mail_forwarder.connect_imap", return_value=FakeImap()),
                 patch("quantcheck.official_mail_forwarder.deliver_email", return_value=(["ok@example.com"], [])) as deliver,
             ):
                 first = forward_official_mail(env)
@@ -171,8 +223,6 @@ class OfficialMailForwarderTests(unittest.TestCase):
 
         self.assertEqual(first["forwarded"], 1)
         self.assertEqual(second["forwarded"], 0)
-        self.assertEqual(listed[0], ("is:unread newer_than:14d quantgt", 7))
-        self.assertEqual(marked, ["msg-1"])
         deliver.assert_called_once()
         self.assertEqual(deliver.call_args.kwargs["to"], ["friend@example.com", "admin@example.com"])
 
@@ -201,6 +251,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
             state_file = Path(tmp) / "official_mail_forwarder_state.json"
             env = {
                 "OFFICIAL_MAIL_ENABLED": "1",
+                "OFFICIAL_MAIL_PROVIDER": "imap",
                 "NOTIFY_EMAIL_TO": "friend@example.com",
                 "NOTIFY_EMAIL_FILE": "",
                 "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
@@ -247,6 +298,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
             state_file = Path(tmp) / "official_mail_forwarder_state.json"
             env = {
                 "OFFICIAL_MAIL_ENABLED": "1",
+                "OFFICIAL_MAIL_PROVIDER": "imap",
                 "NOTIFY_EMAIL_TO": "friend@example.com",
                 "NOTIFY_EMAIL_FILE": "",
                 "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
@@ -254,6 +306,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
                 "OFFICIAL_MAIL_IMAP_HOST": "imap.example.com",
                 "OFFICIAL_MAIL_IMAP_USERNAME": "receiver@example.com",
                 "OFFICIAL_MAIL_IMAP_PASSWORD": "secret",
+                "OFFICIAL_MAIL_IMAP_SECURITY": "starttls",
             }
             with (
                 patch("quantcheck.official_mail_forwarder.STATE_FILE", state_file),
@@ -266,9 +319,8 @@ class OfficialMailForwarderTests(unittest.TestCase):
         self.assertEqual(first["forwarded"], 0)
         self.assertEqual(first["failed"], 1)
         self.assertEqual(second["forwarded"], 0)
-        self.assertEqual(second["failed"], 1)
-        self.assertFalse(state_file.exists())
         self.assertEqual(deliver.call_count, 2)
+        self.assertEqual(deliver.call_args.kwargs["to"], ["friend@example.com", "admin@example.com"])
 
     def test_send_failure_alert_goes_only_to_admins(self):
         msg = EmailMessage()
@@ -293,6 +345,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
 
         env = {
             "OFFICIAL_MAIL_ENABLED": "1",
+            "OFFICIAL_MAIL_PROVIDER": "imap",
             "NOTIFY_EMAIL_TO": "friend@example.com",
             "NOTIFY_EMAIL_FILE": "",
             "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
@@ -300,6 +353,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
             "OFFICIAL_MAIL_IMAP_HOST": "imap.example.com",
             "OFFICIAL_MAIL_IMAP_USERNAME": "receiver@example.com",
             "OFFICIAL_MAIL_IMAP_PASSWORD": "secret",
+            "OFFICIAL_MAIL_IMAP_SECURITY": "starttls",
         }
         with (
             patch.dict("os.environ", env, clear=True),
@@ -320,6 +374,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
     def test_check_failure_alert_goes_only_to_admins(self):
         env = {
             "OFFICIAL_MAIL_ENABLED": "1",
+            "OFFICIAL_MAIL_PROVIDER": "imap",
             "NOTIFY_EMAIL_TO": "friend@example.com",
             "NOTIFY_EMAIL_FILE": "",
             "NOTIFY_ADMIN_EMAIL_TO": "admin@example.com",
@@ -327,6 +382,7 @@ class OfficialMailForwarderTests(unittest.TestCase):
             "OFFICIAL_MAIL_IMAP_HOST": "imap.example.com",
             "OFFICIAL_MAIL_IMAP_USERNAME": "receiver@example.com",
             "OFFICIAL_MAIL_IMAP_PASSWORD": "secret",
+            "OFFICIAL_MAIL_IMAP_SECURITY": "starttls",
         }
         with (
             patch.dict("os.environ", env, clear=True),

@@ -56,7 +56,7 @@ python -m quantcheck.picks_check --test-email
 - `diff.py` should stay pure and easy to unit test.
 - `validation.py` rejects logged-out demo data and incomplete row-detail captures before state writes.
 - `state.py` should be used for JSON state writes so interrupted runs do not corrupt files.
-- `gmail_api_notify.py` should keep Gmail API permission limited to `gmail.send`.
+- `gmail_api_notify.py` should keep Gmail API permission limited to `gmail.modify` for inbox processing, and only use `gmail.send` for the legacy outbound path when explicitly enabled.
 
 ## Scraper Maintenance
 

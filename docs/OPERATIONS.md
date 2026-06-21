@@ -85,32 +85,22 @@ https://www.googleapis.com/auth/gmail.send
 https://www.googleapis.com/auth/gmail.modify
 ```
 
-Official Quant GT email forwarding, recommended Gmail API mode:
+Official Quant GT email forwarding, recommended IMAP receive mode:
 
 ```env
 OFFICIAL_MAIL_ENABLED=1
-OFFICIAL_MAIL_PROVIDER=gmail_api
-OFFICIAL_MAIL_GMAIL_TOKEN=/root/.config/gmail-api/token.json
-OFFICIAL_MAIL_GMAIL_QUERY=is:unread newer_than:14d (quantgt OR "quant gt" OR quantgt.io)
-OFFICIAL_MAIL_GMAIL_SCOPES=https://www.googleapis.com/auth/gmail.modify
-OFFICIAL_MAIL_MARK_READ=1
-```
-
-Manually configure the Quant GT subscription mailbox, for example QQ/Foxmail, to forward official `quantgt.io` emails into `GMAIL_API_FROM`. Quantcheck reads that Gmail mailbox through the Gmail API, detects matching official mail, deduplicates it in `state/official_mail_forwarder_state.json`, forwards it to picks-update recipients: subscribers plus admins, and marks forwarded messages read by default. Operator-only mail routing is unchanged.
-
-The Gmail OAuth token must include `gmail.modify`. The old send-only `gmail.send` token can continue to send reports but cannot read the inbox. If you do not want read-state changes, set `OFFICIAL_MAIL_MARK_READ=0` and authorize with `gmail.readonly` plus `gmail.send` instead.
-
-Legacy IMAP mode is still available if needed:
-
-```env
 OFFICIAL_MAIL_PROVIDER=imap
-OFFICIAL_MAIL_IMAP_HOST=imap.gmail.com
+OFFICIAL_MAIL_IMAP_HOST=imap.example.com
 OFFICIAL_MAIL_IMAP_PORT=993
 OFFICIAL_MAIL_IMAP_USERNAME=receiver@example.com
 OFFICIAL_MAIL_IMAP_PASSWORD=app_password_or_imap_password
 OFFICIAL_MAIL_IMAP_MAILBOX=INBOX
 OFFICIAL_MAIL_IMAP_SEARCH=UNSEEN
 ```
+
+Configure the Quant GT subscription mailbox to forward official `quantgt.io` emails into this IMAP inbox. Quantcheck reads that inbox through IMAP, detects matching official mail, deduplicates it in `state/official_mail_forwarder_state.json`, and forwards it to picks-update recipients: subscribers plus admins. Operator-only mail routing is unchanged.
+
+Gmail API receive mode is deprecated for this workflow and should not be used for production official-mail forwarding. Brevo handles outbound delivery; IMAP handles inbound official-mail pickup.
 
 Optional filters:
 
@@ -215,10 +205,10 @@ No email arrives:
 
 - For picks-update reports, check `NOTIFY_EMAIL_FILE` / `NOTIFY_EMAIL_TO` and `NOTIFY_ADMIN_EMAIL_FILE` / `NOTIFY_ADMIN_EMAIL_TO`.
 - For failures, health alerts, website changes, and test emails, check `NOTIFY_ADMIN_EMAIL_FILE` or `NOTIFY_ADMIN_EMAIL_TO`.
-- For official email forwarding, check `OFFICIAL_MAIL_PROVIDER`, Gmail API token scopes, `OFFICIAL_MAIL_GMAIL_QUERY`, and `logs/official_mail_forwarder.log`. If using legacy IMAP, check `OFFICIAL_MAIL_IMAP_*` settings.
+- For official email forwarding, check `OFFICIAL_MAIL_PROVIDER=imap`, `OFFICIAL_MAIL_IMAP_*` settings, and `logs/official_mail_forwarder.log`.
 - Check `logs/quantcheck_email.log`.
-- For Gmail API, confirm the token exists at `GMAIL_API_TOKEN` and has the `gmail.send` scope.
-- For SMTP, confirm app-password requirements and TLS/STARTTLS settings.
+- For Brevo API, confirm `BREVO_API_KEY`, `BREVO_FROM`, and domain authentication.
+- For SMTP fallback, confirm app-password requirements and TLS/STARTTLS settings.
 
 Site-change alerts are noisy:
 

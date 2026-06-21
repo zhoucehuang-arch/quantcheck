@@ -8,11 +8,11 @@ It replaces a Hermes CronJob-style scheduler with a small self-contained Python 
 
 - Logged-in Quant GT scraping with Playwright.
 - Monthly and Weekly Picks reports as Excel files.
-- Optional forwarding of official Quant GT update emails from a Gmail API mailbox or legacy IMAP inbox.
+- Optional forwarding of official Quant GT update emails from an IMAP inbox.
 - Screenshot capture for changed pages.
 - Diff logic that ignores market-noise fields such as price, return, market cap, and P/E.
 - Guards against logged-out demo data and partial row-detail captures.
-- Email delivery through SMTP or Gmail API.
+- Email delivery through Amazon SES API, SMTP, or Gmail API.
 - Built-in New York time scheduler, file lock, timeouts, health checks, and logs.
 - Site snapshots for Quant GT Picks, TradingView Indicator, AI Winners, RRG, Market Tools, and Study Guide pages.
 
@@ -22,7 +22,7 @@ It replaces a Hermes CronJob-style scheduler with a small self-contained Python 
 - Python 3.11 or newer.
 - systemd for production daemon deployment.
 - Quant GT member credentials.
-- SMTP credentials or a Gmail API token for email alerts.
+- Amazon SES API, SMTP credentials, or a Gmail API token for email alerts.
 
 Windows is not a supported daemon runtime.
 
@@ -43,11 +43,9 @@ QUANTGT_PASSWORD=your_quantgt_password
 NOTIFY_EMAIL_TO=friend@example.com
 NOTIFY_ADMIN_EMAIL_TO=admin@example.com
 
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=465
-SMTP_USERNAME=sender@gmail.com
-SMTP_PASSWORD=app_password_or_smtp_password
-SMTP_FROM=sender@gmail.com
+EMAIL_PROVIDER=brevo
+BREVO_API_KEY=your_brevo_api_key
+BREVO_FROM=Quant GT <notify@hadan.site>
 ```
 
 Initialize baseline without sending a change alert:

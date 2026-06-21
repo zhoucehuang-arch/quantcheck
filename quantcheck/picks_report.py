@@ -81,6 +81,25 @@ def has_picks_content(page) -> bool:
         return False
 
 
+def has_subscription_gate(page) -> bool:
+    try:
+        return bool(page.evaluate(
+            """() => {
+              const root = document.querySelector('main') || document.body;
+              const text = (root.innerText || document.body.innerText || '').replace(/\\s+/g, ' ').toLowerCase();
+              const subscribeButton = [...root.querySelectorAll('button,a')].some(el => /subscribe/i.test((el.innerText || el.textContent || '').trim()));
+              const blurred = [...root.querySelectorAll('*')].some(el => {
+                const cls = String(el.className || '');
+                const style = getComputedStyle(el);
+                return /blur\[|blur-/i.test(cls) || (style.filter && style.filter !== 'none');
+              });
+              return subscribeButton || blurred || /\b(subscribe|subscription|upgrade|pricing|member access|paid plan)\b/.test(text);
+            }"""
+        ))
+    except Exception:
+        return False
+
+
 def wait_for_picks_content(page, timeout: int = 20000) -> None:
     page.wait_for_function(
         """() => {
@@ -131,15 +150,15 @@ def wait_for_parsable_picks_rows(page, mode: str, attempts: int = 3, timeout: in
 
 
 def login(page):
-    # `networkidle` is brittle on Quant GT because embedded market/news widgets
-    # can keep polling. Use document readiness + table hydration instead.
+    # Prefer the existing authenticated session and only fall back to manual login
+    # when the page genuinely lacks usable picks content.
     page.goto(f"{BASE}/dashboard/quantgt-picks", wait_until="domcontentloaded", timeout=45000)
     try:
         page.wait_for_load_state("load", timeout=15000)
     except PlaywrightTimeoutError:
         pass
     page.wait_for_timeout(2500)
-    if has_picks_content(page) and has_auth_session(page) and not is_login_prompt_visible(page):
+    if has_auth_session(page) and has_picks_content(page) and not is_login_prompt_visible(page):
         return
     page.goto(f"{BASE}/login?redirect=/dashboard/quantgt-picks", wait_until="domcontentloaded", timeout=45000)
     try:
@@ -171,9 +190,11 @@ def login(page):
 
 
 def assert_authenticated_page(page, label: str):
-    """Reject unauthenticated/demo pages before their content can enter monitor state."""
+    """Reject unauthenticated/demo/paywalled pages before their content can enter monitor state."""
     if is_login_prompt_visible(page):
         raise RuntimeError(f"{label} page is not authenticated: login prompt visible")
+    if has_subscription_gate(page):
+        raise RuntimeError(f"{label} page is not accessible: subscription/paywall gate visible")
     cookies = page.context.cookies(BASE)
     names = {c.get('name') for c in cookies}
     if '__Secure-authjs.session-token' not in names:

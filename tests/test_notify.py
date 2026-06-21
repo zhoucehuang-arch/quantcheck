@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quantcheck.gmail_api_notify import parse_recipients, send_email, send_via_gmail_api
+from quantcheck.gmail_api_notify import parse_recipients, send_email, send_via_gmail_api, send_email_per_recipient
 from quantcheck.notify_routes import EmailRoute, admin_recipients, recipients_for_route, subscriber_recipients
 
 
@@ -83,15 +83,38 @@ class NotifyTests(unittest.TestCase):
     def test_send_email_sends_one_private_message_per_recipient(self):
         calls = []
 
-        def fake_gmail(subject, body, to=None, attachments=None, html=None):
+        def fake_brevo(subject, body, to=None, attachments=None, html=None):
             calls.append(list(to or []))
             return True
 
-        with patch("quantcheck.gmail_api_notify.send_via_gmail_api", side_effect=fake_gmail), \
+        with patch("quantcheck.gmail_api_notify.send_via_brevo_api", side_effect=fake_brevo), \
              patch("quantcheck.gmail_api_notify.send_via_smtp") as smtp:
             self.assertTrue(send_email("Subject", "Body", to=["a@example.com", "b@example.com"]))
 
         self.assertEqual(calls, [["a@example.com"], ["b@example.com"]])
+        smtp.assert_not_called()
+
+    def test_email_provider_brevo_bypasses_gmail_and_smtp(self):
+        calls = []
+
+        def fake_brevo(subject, body, to=None, attachments=None, html=None):
+            calls.append(list(to or []))
+            return True
+
+        with patch.dict("os.environ", {"EMAIL_PROVIDER": "brevo"}, clear=True), \
+             patch("quantcheck.gmail_api_notify.send_via_brevo_api", side_effect=fake_brevo), \
+             patch("quantcheck.gmail_api_notify.send_via_gmail_api") as gmail, \
+             patch("quantcheck.gmail_api_notify.send_via_smtp") as smtp, \
+             patch("quantcheck.gmail_api_notify._ledger_record") as ledger:
+            delivered, failed = send_email_per_recipient("Subject", "Body", to=["a@example.com", "b@example.com"])
+
+        self.assertEqual(delivered, ["a@example.com", "b@example.com"])
+        self.assertEqual(failed, [])
+        self.assertEqual(calls, [["a@example.com"], ["b@example.com"]])
+        self.assertEqual(ledger.call_count, 2)
+        ledger.assert_any_call("brevo", "Subject", "a@example.com", True, message_id=None)
+        ledger.assert_any_call("brevo", "Subject", "b@example.com", True, message_id=None)
+        gmail.assert_not_called()
         smtp.assert_not_called()
 
     def test_gmail_api_send_skips_refresh_when_credentials_are_valid(self):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import fcntl
+import json
 import mimetypes
 import os
 import re
@@ -9,6 +10,9 @@ import smtplib
 import ssl
 import tempfile
 import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
@@ -16,6 +20,7 @@ from typing import Iterable, List
 
 ROOT = Path(os.environ.get("QUANTCHECK_HOME", Path(__file__).resolve().parents[1]))
 LOG_FILE = ROOT / "logs" / "quantcheck_email.log"
+LEDGER_FILE = ROOT / "logs" / "email_delivery_ledger.jsonl"
 
 
 def _log_failure(context: str, exc: Exception | str) -> None:
@@ -36,6 +41,32 @@ def _log_line(message: str) -> None:
         ts = datetime.now(timezone.utc).isoformat()
         with LOG_FILE.open("a", encoding="utf-8") as handle:
             handle.write(f"[{ts}] {message}\n")
+    except Exception:
+        pass
+
+
+def _ledger_record(provider: str, subject: str, recipient: str, success: bool, *, message_id: str | None = None, error: Exception | str | None = None) -> None:
+    try:
+        LEDGER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        error_text = None
+        if error is not None:
+            if isinstance(error, Exception):
+                error_text = f"{type(error).__name__}: {error}"
+            else:
+                error_text = str(error)
+        record = {
+            "time": datetime.now(timezone.utc).isoformat(),
+            "provider": provider,
+            "to": recipient,
+            "subject": subject,
+            "success": success,
+        }
+        if message_id:
+            record["message_id"] = message_id
+        if error_text:
+            record["error"] = error_text[:1000]
+        with LEDGER_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
     except Exception:
         pass
 
@@ -136,6 +167,53 @@ def refresh_gmail_credentials(token_path: Path, scopes: list[str]):
         return creds
 
 
+def send_via_brevo_api(subject: str, body: str, to: str | Iterable[str] | None = None, attachments: Iterable[Path] | None = None, timeout: int = 60, html: str | None = None) -> bool:
+    recipients = parse_recipients(to) if to is None else parse_recipients(to, file_path="")
+    sender = os.environ.get("BREVO_FROM") or os.environ.get("SMTP_FROM")
+    api_key = os.environ.get("BREVO_API_KEY", "")
+    if not (recipients and sender and api_key):
+        return False
+    try:
+        payload: dict[str, object] = {
+            "sender": {"name": sender.split("<", 1)[0].strip() if "<" in sender else sender, "email": sender.split("<", 1)[1].rstrip("> ") if "<" in sender and ">" in sender else sender},
+            "to": [{"email": recipient} for recipient in recipients],
+            "subject": subject,
+            "textContent": body or "",
+        }
+        if html:
+            payload["htmlContent"] = html
+        brevo_attachments = []
+        for attachment in attachments or []:
+            path = Path(attachment)
+            if not path.exists() or not path.is_file():
+                continue
+            brevo_attachments.append({"name": path.name, "content": base64.b64encode(path.read_bytes()).decode("ascii")})
+        if brevo_attachments:
+            payload["attachment"] = brevo_attachments
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=data,
+            method="POST",
+            headers={
+                "api-key": api_key,
+                "content-type": "application/json",
+                "accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_body = response.read().decode("utf-8", errors="replace")
+            try:
+                response_json = json.loads(response_body)
+            except Exception:
+                response_json = {}
+            os.environ["QUANTCHECK_LAST_EMAIL_MESSAGE_ID"] = str(response_json.get("messageId") or "")
+        return True
+    except Exception as exc:
+        _log_failure("brevo api send failed", exc)
+        return False
+
+
 def send_via_smtp(subject: str, body: str, to: str | Iterable[str] | None = None, attachments: Iterable[Path] | None = None, timeout: int = 30, html: str | None = None) -> bool:
     recipients = parse_recipients(to) if to is None else parse_recipients(to, file_path="")
     host = os.environ.get("SMTP_HOST", "")
@@ -168,12 +246,10 @@ def send_via_smtp(subject: str, body: str, to: str | Iterable[str] | None = None
 
 
 def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None = None, attachments: Iterable[Path] | None = None, timeout: int = 120, html: str | None = None) -> bool:
-    """Send with Gmail API when google client libraries and OAuth token are configured.
+    """Legacy Gmail API sender.
 
-    Required env/config:
-      GMAIL_API_ENABLED=1
-      GMAIL_API_TOKEN=/path/token.json
-      GMAIL_API_FROM=sender@example.com
+    Production delivery uses Brevo. This helper stays disabled unless
+    GMAIL_API_ENABLED=1 is explicitly set for manual recovery.
     """
     if os.environ.get("GMAIL_API_ENABLED", "0") != "1":
         return False
@@ -217,6 +293,23 @@ def send_via_gmail_api(subject: str, body: str, to: str | Iterable[str] | None =
         return False
 
 
+def _send_once(subject: str, body: str, recipient: str, attachments: list[Path], html: str | None) -> tuple[bool, str]:
+    provider = os.environ.get("EMAIL_PROVIDER", "auto").strip().lower()
+    if provider == "brevo":
+        return send_via_brevo_api(subject, body, to=[recipient], attachments=attachments, html=html), "brevo"
+    if provider == "smtp":
+        return send_via_smtp(subject, body, to=[recipient], attachments=attachments, html=html), "smtp"
+    if provider == "gmail":
+        return send_via_gmail_api(subject, body, to=[recipient], attachments=attachments, html=html), "gmail"
+    if send_via_brevo_api(subject, body, to=[recipient], attachments=attachments, html=html):
+        return True, "brevo"
+    if send_via_smtp(subject, body, to=[recipient], attachments=attachments, html=html):
+        return True, "smtp"
+    if send_via_gmail_api(subject, body, to=[recipient], attachments=attachments, html=html):
+        return True, "gmail"
+    return False, "auto"
+
+
 def send_email_per_recipient(
     subject: str,
     body: str,
@@ -233,10 +326,13 @@ def send_email_per_recipient(
     failed: list[str] = []
     for recipient in recipients:
         sent = False
+        provider_used = os.environ.get("EMAIL_PROVIDER", "auto").strip().lower() or "auto"
         for _ in range(max(1, retries + 1)):
-            sent = send_via_gmail_api(subject, body, to=[recipient], attachments=attachments, html=html) or send_via_smtp(subject, body, to=[recipient], attachments=attachments, html=html)
+            sent, provider_used = _send_once(subject, body, recipient, attachments, html)
             if sent:
                 break
+        message_id = os.environ.pop("QUANTCHECK_LAST_EMAIL_MESSAGE_ID", "") if sent else ""
+        _ledger_record(provider_used, subject, recipient, sent, message_id=message_id or None)
         (delivered if sent else failed).append(recipient)
     if failed:
         _log_line(f"per-recipient delivery FAILED for {len(failed)} recipient(s): {', '.join(failed)}: {subject}")

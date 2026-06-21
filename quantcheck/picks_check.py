@@ -426,8 +426,11 @@ def send_email(
         log(f'email sent via {route.value} to {", ".join(delivered)}: {subject}')
     if failed:
         log(f'email FAILED via {route.value} for {len(failed)} recipient(s): {", ".join(failed)}: {subject}')
-    if not delivered and not failed:
-        log(f'email send failed or no sender configured: {subject}')
+    if not delivered:
+        if failed:
+            raise RuntimeError(f'email delivery failed for all {len(failed)} recipient(s): {subject}')
+        raise RuntimeError(f'email send failed or no sender configured: {subject}')
+    return delivered, failed
 
 
 def notify(
@@ -455,7 +458,7 @@ def ensure_login(page, env: Dict[str, str]):
     except PlaywrightTimeoutError:
         pass
     page.wait_for_timeout(2500)
-    if report.has_picks_content(page) and report.has_auth_session(page) and not report.is_login_prompt_visible(page):
+    if report.has_auth_session(page) and report.has_picks_content(page) and not report.is_login_prompt_visible(page):
         return
     email = env.get('QUANTGT_EMAIL')
     password = env.get('QUANTGT_PASSWORD')
@@ -535,7 +538,10 @@ def capture_logged_in_screenshots(which: List[str]) -> Dict[str, Path]:
                 pass
             page.wait_for_timeout(1500)
             _wait_for_screenshot_ready(page, name)
-            report.assert_authenticated_page(page, name)
+            if report.is_login_prompt_visible(page):
+                raise RuntimeError(f'{name} page is not authenticated: login prompt visible')
+            if not report.has_picks_content(page):
+                raise RuntimeError(f'{name} page has no picks content')
             path = SHOTS / f'{name}_picks_{ts}.png'
             page.screenshot(path=str(path), full_page=True)
             out[name] = path
@@ -606,11 +612,25 @@ def run_test_email():
         excel = report.export_excel(data)
         shots = capture_logged_in_screenshots(['monthly', 'weekly'])
         tg_body = build_telegram_body(data, None, context='manual full-flow test')
-        body = build_notification_body(data, None, context='manual full-flow test')
-        html_body = build_notification_html(data, None, context='manual full-flow test')
+        summary_body = build_notification_body(data, None, context='manual full-flow test')
+        body = '\n'.join([
+            'Quant GT Monitor test completed successfully.',
+            'Route: administrators only',
+            f"Monthly date: {data.get('monthly', {}).get('pick_date', 'Unknown')}",
+            f"Weekly date: {data.get('weekly', {}).get('pick_date', 'Unknown')}",
+            '',
+            'Current Picks Summary:',
+            summary_body,
+            '',
+            f"Excel: {excel}",
+            f"Raw JSON: {raw_path}",
+            'Screenshots:',
+            *[f'{name}: {path}' for name, path in shots.items()],
+        ])
+        html_body = build_notification_html(data, None, context='manual full-flow test passed')
         media = [excel] + list(shots.values())
         notify(
-            'Quant GT Monitor Test: Full Flow Report + Screenshots',
+            'Quant GT Monitor Test Passed',
             body,
             media,
             html_body=html_body,
@@ -626,7 +646,7 @@ def run_test_email():
         write_health(last_run_at=now_utc(), last_error=str(e), consecutive_failures=failures, last_window='manual_test_email')
         subject = 'Quant GT Monitor Test Failed'
         body = (
-            'Manual full-flow test failed before any user notification was sent.\n'
+            'Manual full-flow test failed before notification could be sent.\n'
             'Route: administrators only\n'
             f'Error: {e}\n'
             f'Consecutive failures: {failures}\n\n'
@@ -642,6 +662,7 @@ def run_test_email():
             subject,
             [
                 {'label': 'Route', 'value': 'administrators only'},
+                {'label': 'Status', 'value': 'Test failed before notification could be sent', 'tone': 'error'},
                 {'label': 'Error', 'value': str(e), 'tone': 'error'},
                 {'label': 'Consecutive Failures', 'value': failures, 'tone': 'warning'},
                 {'label': 'Traceback', 'value': tb[-3000:], 'tone': 'error'},

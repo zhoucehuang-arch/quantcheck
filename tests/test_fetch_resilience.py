@@ -118,6 +118,24 @@ class FetchResilienceTests(unittest.TestCase):
         self.assertIsNotNone(sent[0]["html_body"])
         self.assertIn("Quant GT Monitor", sent[0]["html_body"])
         self.assertIn("monthly rows stayed empty", sent[0]["html_body"])
+
+    def test_send_email_raises_when_all_recipients_fail(self):
+        with patch.object(picks_check, "load_env", return_value={"NOTIFY_EMAIL_TO": "a@example.com", "NOTIFY_EMAIL_FILE": ""}), \
+             patch.object(picks_check, "deliver_email", return_value=([], ["a@example.com"])), \
+             patch.object(picks_check, "log"):
+            with self.assertRaisesRegex(RuntimeError, "email delivery failed for all 1 recipient"):
+                picks_check.send_email("Quant GT Picks Updated", "Body")
+
+    def test_send_email_allows_partial_delivery_but_logs_failures(self):
+        with patch.object(picks_check, "load_env", return_value={"NOTIFY_EMAIL_TO": "a@example.com,b@example.com", "NOTIFY_EMAIL_FILE": ""}), \
+             patch.object(picks_check, "deliver_email", return_value=(["a@example.com"], ["b@example.com"])), \
+             patch.object(picks_check, "log") as log:
+            delivered, failed = picks_check.send_email("Quant GT Picks Updated", "Body")
+
+        self.assertEqual(delivered, ["a@example.com"])
+        self.assertEqual(failed, ["b@example.com"])
+        self.assertTrue(any("email FAILED" in call.args[0] for call in log.call_args_list))
+
     def test_weekly_screenshot_ready_requires_full_top_10_before_capture(self):
         class FakePage:
             def __init__(self):
