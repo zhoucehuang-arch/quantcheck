@@ -57,9 +57,11 @@ def _ledger_record(provider: str, subject: str, recipient: str, success: bool, *
         record = {
             "time": datetime.now(timezone.utc).isoformat(),
             "provider": provider,
+            "recipient": recipient,
             "to": recipient,
             "subject": subject,
             "success": success,
+            "status": "sent" if success else "failed",
         }
         if message_id:
             record["message_id"] = message_id

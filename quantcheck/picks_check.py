@@ -405,7 +405,6 @@ def send_telegram(text: str, media: List[Path] | None = None):
     for p in media or []:
         if p and p.exists():
             msg += f"\nMEDIA:{p}"
-    # Standalone email-only mode; no platform-specific delivery is required.
     return
 
 
@@ -441,9 +440,6 @@ def notify(
     telegram_body: str | None = None,
     route: EmailRoute = EmailRoute.PICKS_UPDATE,
 ):
-    # Standalone mode sends email directly and records a local notification marker.
-    # The script stays quiet on no-change runs; change/test runs print a concise
-    # summary so service logs remain auditable.
     send_email(subject, body, media, html_body=html_body, route=route)
     tg = telegram_body or body
     note = {'subject': subject, 'body': tg, 'email_body': body, 'media': [str(p) for p in media or [] if p.exists()], 'at': now_utc()}
@@ -513,18 +509,28 @@ def _wait_for_screenshot_ready(page, name: str) -> None:
         arg=name,
         timeout=20000,
     )
-    # One final short beat lets charts/expanded detail finish layout after the
-    # row-count and document-height gates are satisfied.
     page.wait_for_timeout(1000)
 
 
-def capture_logged_in_screenshots(which: List[str]) -> Dict[str, Path]:
+def _assert_screenshot_symbols_match(page, name: str, expected_rows: List[Dict[str, Any]]) -> None:
+    expected_symbols = [str(row.get('symbol') or '').strip().upper() for row in expected_rows if row.get('symbol')]
+    page_rows = report.rows_from_table(page, name)
+    page_symbols = [str(row.get('symbol') or '').strip().upper() for row in page_rows if row.get('symbol')]
+    if name == 'weekly':
+        expected_symbols = expected_symbols[:10]
+        page_symbols = page_symbols[:10]
+    if expected_symbols != page_symbols:
+        raise RuntimeError(f'{name} screenshot symbols mismatch: expected={expected_symbols} actual={page_symbols}')
+
+
+def capture_logged_in_screenshots(which: List[str], expected_data: Dict[str, Any] | None = None) -> Dict[str, Path]:
     env = load_env()
     ts = datetime.now(NY).strftime('%Y-%m-%d_%H%M%S')
     out = {}
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(str(PROFILE), headless=True, viewport={'width': 1440, 'height': 1100})
-        page = ctx.new_page()
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(viewport={'width': 1440, 'height': 1100}, locale='en-US', storage_state=None)
+        page = context.new_page()
         ensure_login(page, env)
         targets = {
             'monthly': f'{BASE}/dashboard/quantgt-picks',
@@ -542,10 +548,14 @@ def capture_logged_in_screenshots(which: List[str]) -> Dict[str, Path]:
                 raise RuntimeError(f'{name} page is not authenticated: login prompt visible')
             if not report.has_picks_content(page):
                 raise RuntimeError(f'{name} page has no picks content')
+            expected_rows = ((expected_data or {}).get(name, {}) or {}).get('rows') or []
+            if expected_rows:
+                _assert_screenshot_symbols_match(page, name, expected_rows)
             path = SHOTS / f'{name}_picks_{ts}.png'
             page.screenshot(path=str(path), full_page=True)
             out[name] = path
-        ctx.close()
+        context.close()
+        browser.close()
     return out
 
 
@@ -610,7 +620,7 @@ def run_test_email():
         raw_path = raw_dir / f"picks_raw_test_{datetime.now(NY).strftime('%Y-%m-%d_%H%M%S')}.json"
         json_dump(raw_path, data)
         excel = report.export_excel(data)
-        shots = capture_logged_in_screenshots(['monthly', 'weekly'])
+        shots = capture_logged_in_screenshots(['monthly', 'weekly'], expected_data=data)
         tg_body = build_telegram_body(data, None, context='manual full-flow test')
         summary_body = build_notification_body(data, None, context='manual full-flow test')
         body = '\n'.join([
@@ -678,7 +688,6 @@ def run_baseline(echo: bool = True):
     if LATEST.exists():
         PREVIOUS.write_text(LATEST.read_text(encoding='utf-8'), encoding='utf-8')
     json_dump(LATEST, data)
-    # Preserve compatibility for old scripts.
     json_dump(ROOT / 'latest_picks.json', data)
     write_health(last_run_at=now_utc(), last_success_at=now_utc(), last_error=None, consecutive_failures=0,
                  monthly_date=data['monthly']['pick_date'], weekly_date=data['weekly']['pick_date'], mode='baseline')
@@ -741,7 +750,7 @@ def run_check(force=False, no_random=False):
             changed_pages.append('monthly')
         if diff['weekly'].get('changed_flag'):
             changed_pages.append('weekly')
-        shots = capture_logged_in_screenshots(changed_pages)
+        shots = capture_logged_in_screenshots(changed_pages, expected_data=data)
         prune_old_files(SHOTS, '*_picks_*.png', keep=160)
         tg_body = build_telegram_body(data, diff, context=f'picks changed · window={window or "forced"}')
         body = build_notification_body(data, diff, context=f'picks changed · window={window or "forced"}')
@@ -755,7 +764,6 @@ def run_check(force=False, no_random=False):
         failures = int(health.get('consecutive_failures') or 0) + 1
         failure_shot = None
         try:
-            # Best-effort screenshot of dashboard/login state.
             shots = capture_logged_in_screenshots(['weekly'])
             failure_shot = shots.get('weekly')
         except Exception:
