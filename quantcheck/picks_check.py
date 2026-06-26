@@ -612,7 +612,7 @@ def write_health(**kwargs):
     json_dump(HEALTH, obj)
 
 
-def run_test_email():
+def run_test_email(recipient: str | None = None):
     try:
         data = fetch_current()
         raw_dir = STATE / 'raw'
@@ -639,15 +639,29 @@ def run_test_email():
         ])
         html_body = build_notification_html(data, None, context='manual full-flow test passed')
         media = [excel] + list(shots.values())
-        notify(
-            'Quant GT Monitor Test Passed',
-            body,
-            media,
-            html_body=html_body,
-            telegram_body=tg_body,
-            route=EmailRoute.ADMIN,
-        )
-        print(json.dumps({'status': 'test_notification_sent', 'excel': str(excel), 'raw': str(raw_path), 'screenshots': {k: str(v) for k, v in shots.items()}}, ensure_ascii=False, indent=2))
+        route = EmailRoute.PICKS_UPDATE if recipient else EmailRoute.ADMIN
+        to = [recipient] if recipient else None
+        if recipient:
+            delivered, failed = deliver_email(
+                'Quant GT Monitor Test Passed',
+                body,
+                to=recipient,
+                attachments=media,
+                html=html_body,
+            )
+            if failed:
+                raise RuntimeError(f'email delivery failed for {failed}')
+            log(f'email sent via explicit recipient to {recipient}: Quant GT Monitor Test Passed')
+        else:
+            notify(
+                'Quant GT Monitor Test Passed',
+                body,
+                media,
+                html_body=html_body,
+                telegram_body=tg_body,
+                route=route,
+            )
+        print(json.dumps({'status': 'test_notification_sent', 'excel': str(excel), 'raw': str(raw_path), 'screenshots': {k: str(v) for k, v in shots.items()}, 'recipient': recipient}, ensure_ascii=False, indent=2))
     except Exception as e:
         tb = traceback.format_exc()
         log('manual test-email failed: ' + tb)
@@ -790,11 +804,12 @@ def main():
     ap.add_argument('--mode', choices=['baseline', 'check', 'fetch', 'screenshot'], default='check')
     ap.add_argument('--force', action='store_true')
     ap.add_argument('--no-random', action='store_true')
-    ap.add_argument('--quiet', action='store_true')
     ap.add_argument('--test-email', action='store_true', help='Fetch current picks, export Excel, capture screenshots, and send a test email notification')
+    ap.add_argument('--recipient', help='Send the test email to one explicit recipient instead of the default route')
     args = ap.parse_args()
+
     if args.test_email:
-        run_test_email()
+        run_test_email(args.recipient)
         return
     if args.mode == 'baseline':
         run_baseline(echo=not args.quiet)
