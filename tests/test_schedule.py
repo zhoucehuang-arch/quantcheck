@@ -1,6 +1,8 @@
+import os
 import unittest
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
+from unittest.mock import patch
 
 from quantcheck.schedule import (
     NON_TRADING_DAY_SCHEDULE,
@@ -62,6 +64,20 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(current_window(datetime(2026, 5, 26, 9, 0, tzinfo=ny)), "premarket_0900")
         self.assertIsNone(current_window(datetime(2026, 5, 26, 9, 40, tzinfo=ny)))
         self.assertEqual(current_window(datetime(2026, 5, 30, 12, 0, tzinfo=ny)), "daily_non_trading_1200")
+
+    def test_default_picks_run_has_no_global_timeout(self):
+        import quantcheck.scheduler as scheduler
+
+        captured = {}
+
+        def fake_run_cmd(args, timeout):
+            captured["timeout"] = timeout
+            return 0
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(scheduler, "run_cmd", side_effect=fake_run_cmd):
+            self.assertEqual(scheduler.run_picks(), 0)
+
+        self.assertIsNone(captured["timeout"])
 
 
 if __name__ == "__main__":

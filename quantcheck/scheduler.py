@@ -57,7 +57,7 @@ def seconds_until_next(raw_schedule: str | None = None):
     return max(1, int((target - now).total_seconds())), target, kind
 
 
-def run_cmd(args: list[str], timeout: int) -> int:
+def run_cmd(args: list[str], timeout: int | None) -> int:
     env = os.environ.copy()
     env.setdefault("QUANTCHECK_HOME", str(ROOT))
     start = time.time()
@@ -78,8 +78,19 @@ def run_cmd(args: list[str], timeout: int) -> int:
         return 1
 
 
+def _optional_timeout(env_key: str) -> int | None:
+    raw = os.environ.get(env_key, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def run_picks(force: bool = False):
-    timeout = int(os.environ.get("QUANTCHECK_SCAN_TIMEOUT_SECONDS", "110"))
+    timeout = _optional_timeout("QUANTCHECK_SCAN_TIMEOUT_SECONDS")
     args = [sys.executable, "-m", "quantcheck.picks_check", "--mode", "check", "--no-random"]
     if force:
         args.append("--force")

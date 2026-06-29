@@ -1,5 +1,7 @@
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -116,6 +118,55 @@ class NotifyTests(unittest.TestCase):
         ledger.assert_any_call("brevo", "Subject", "b@example.com", True, message_id=None)
         gmail.assert_not_called()
         smtp.assert_not_called()
+
+    def test_send_email_per_recipient_uses_bounded_parallel_delivery(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        calls = []
+
+        def fake_brevo(subject, body, to=None, attachments=None, html=None):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+                calls.append(list(to or []))
+            time.sleep(0.02)
+            with lock:
+                active -= 1
+            return True
+
+        with patch.dict("os.environ", {"EMAIL_PROVIDER": "brevo", "QUANTCHECK_EMAIL_WORKERS": "4"}, clear=True), \
+             patch("quantcheck.gmail_api_notify.send_via_brevo_api", side_effect=fake_brevo), \
+             patch("quantcheck.gmail_api_notify._ledger_record") as ledger:
+            delivered, failed = send_email_per_recipient(
+                "Subject",
+                "Body",
+                to=[f"user{i}@example.com" for i in range(8)],
+            )
+
+        self.assertEqual(delivered, [f"user{i}@example.com" for i in range(8)])
+        self.assertEqual(failed, [])
+        self.assertEqual(len(calls), 8)
+        self.assertGreater(max_active, 1)
+        self.assertEqual(ledger.call_count, 8)
+
+    def test_send_email_per_recipient_retries_transient_provider_failure(self):
+        attempts = []
+
+        def fake_brevo(subject, body, to=None, attachments=None, html=None):
+            attempts.append(list(to or []))
+            return len(attempts) > 1
+
+        with patch.dict("os.environ", {"EMAIL_PROVIDER": "brevo", "QUANTCHECK_EMAIL_WORKERS": "1"}, clear=True), \
+             patch("quantcheck.gmail_api_notify.send_via_brevo_api", side_effect=fake_brevo), \
+             patch("quantcheck.gmail_api_notify._ledger_record") as ledger:
+            delivered, failed = send_email_per_recipient("Subject", "Body", to=["a@example.com"], retries=1)
+
+        self.assertEqual(attempts, [["a@example.com"], ["a@example.com"]])
+        self.assertEqual(delivered, ["a@example.com"])
+        self.assertEqual(failed, [])
+        ledger.assert_called_once_with("brevo", "Subject", "a@example.com", True, message_id=None)
 
     def test_gmail_api_send_skips_refresh_when_credentials_are_valid(self):
         class FakeCreds:

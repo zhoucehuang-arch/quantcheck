@@ -120,21 +120,30 @@ class FetchResilienceTests(unittest.TestCase):
         self.assertIn("monthly rows stayed empty", sent[0]["html_body"])
 
     def test_send_email_raises_when_all_recipients_fail(self):
-        with patch.object(picks_check, "load_env", return_value={"NOTIFY_EMAIL_TO": "a@example.com", "NOTIFY_EMAIL_FILE": ""}), \
+        with patch.object(picks_check, "load_env", return_value={"NOTIFY_EMAIL_TO": "a@example.com", "NOTIFY_EMAIL_FILE": "", "NOTIFY_ADMIN_EMAIL_TO": "", "NOTIFY_ADMIN_EMAIL_FILE": ""}), \
              patch.object(picks_check, "deliver_email", return_value=([], ["a@example.com"])), \
              patch.object(picks_check, "log"):
-            with self.assertRaisesRegex(RuntimeError, "email delivery failed for all 1 recipient"):
+            with self.assertRaisesRegex(RuntimeError, "email delivery failed after retry for 1 recipient"):
                 picks_check.send_email("Quant GT Picks Updated", "Body")
 
-    def test_send_email_allows_partial_delivery_but_logs_failures(self):
-        with patch.object(picks_check, "load_env", return_value={"NOTIFY_EMAIL_TO": "a@example.com,b@example.com", "NOTIFY_EMAIL_FILE": ""}), \
-             patch.object(picks_check, "deliver_email", return_value=(["a@example.com"], ["b@example.com"])), \
+    def test_send_email_retries_partial_delivery_failures_before_returning(self):
+        attempts = []
+
+        def fake_deliver(subject, body, to=None, attachments=None, html=None):
+            attempts.append(list(to or []))
+            if len(attempts) == 1:
+                return ["a@example.com"], ["b@example.com"]
+            return ["b@example.com"], []
+
+        with patch.object(picks_check, "load_env", return_value={"NOTIFY_EMAIL_TO": "a@example.com,b@example.com", "NOTIFY_EMAIL_FILE": "", "NOTIFY_ADMIN_EMAIL_TO": "", "NOTIFY_ADMIN_EMAIL_FILE": ""}), \
+             patch.object(picks_check, "deliver_email", side_effect=fake_deliver), \
              patch.object(picks_check, "log") as log:
             delivered, failed = picks_check.send_email("Quant GT Picks Updated", "Body")
 
-        self.assertEqual(delivered, ["a@example.com"])
-        self.assertEqual(failed, ["b@example.com"])
-        self.assertTrue(any("email FAILED" in call.args[0] for call in log.call_args_list))
+        self.assertEqual(attempts, [["a@example.com", "b@example.com"], ["b@example.com"]])
+        self.assertEqual(delivered, ["a@example.com", "b@example.com"])
+        self.assertEqual(failed, [])
+        self.assertTrue(any("email retrying" in call.args[0] for call in log.call_args_list))
 
     def test_weekly_screenshot_ready_requires_full_top_10_before_capture(self):
         class FakePage:

@@ -421,13 +421,18 @@ def send_email(
         log(f'email skipped: {route_label(route)} not configured for {subject}')
         return
     delivered, failed = deliver_email(subject, body, to=recipients, attachments=attachments or [], html=html_body)
+    if failed:
+        log(f'email retrying via {route.value} for {len(failed)} recipient(s): {", ".join(failed)}: {subject}')
+        retry_delivered, retry_failed = deliver_email(subject, body, to=failed, attachments=attachments or [], html=html_body)
+        delivered = [*delivered, *[r for r in retry_delivered if r not in delivered]]
+        failed = retry_failed
     if delivered:
         log(f'email sent via {route.value} to {", ".join(delivered)}: {subject}')
     if failed:
-        log(f'email FAILED via {route.value} for {len(failed)} recipient(s): {", ".join(failed)}: {subject}')
+        log(f'email FAILED via {route.value} after retry for {len(failed)} recipient(s): {", ".join(failed)}: {subject}')
+    if failed:
+        raise RuntimeError(f'email delivery failed after retry for {len(failed)} recipient(s): {", ".join(failed)}: {subject}')
     if not delivered:
-        if failed:
-            raise RuntimeError(f'email delivery failed for all {len(failed)} recipient(s): {subject}')
         raise RuntimeError(f'email send failed or no sender configured: {subject}')
     return delivered, failed
 

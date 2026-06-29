@@ -13,6 +13,8 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
@@ -21,6 +23,26 @@ from typing import Iterable, List
 ROOT = Path(os.environ.get("QUANTCHECK_HOME", Path(__file__).resolve().parents[1]))
 LOG_FILE = ROOT / "logs" / "quantcheck_email.log"
 LEDGER_FILE = ROOT / "logs" / "email_delivery_ledger.jsonl"
+_THREAD_STATE = threading.local()
+
+
+def _set_last_message_id(message_id: str) -> None:
+    _THREAD_STATE.last_message_id = message_id or ""
+    os.environ["QUANTCHECK_LAST_EMAIL_MESSAGE_ID"] = message_id or ""
+
+
+def _pop_last_message_id() -> str:
+    message_id = getattr(_THREAD_STATE, "last_message_id", "") or ""
+    _THREAD_STATE.last_message_id = ""
+    if message_id:
+        try:
+            current = os.environ.get("QUANTCHECK_LAST_EMAIL_MESSAGE_ID", "")
+            if current == message_id:
+                os.environ.pop("QUANTCHECK_LAST_EMAIL_MESSAGE_ID", None)
+        except Exception:
+            pass
+        return message_id
+    return os.environ.pop("QUANTCHECK_LAST_EMAIL_MESSAGE_ID", "")
 
 
 def _log_failure(context: str, exc: Exception | str) -> None:
@@ -209,7 +231,7 @@ def send_via_brevo_api(subject: str, body: str, to: str | Iterable[str] | None =
                 response_json = json.loads(response_body)
             except Exception:
                 response_json = {}
-            os.environ["QUANTCHECK_LAST_EMAIL_MESSAGE_ID"] = str(response_json.get("messageId") or "")
+            _set_last_message_id(str(response_json.get("messageId") or ""))
         return True
     except Exception as exc:
         _log_failure("brevo api send failed", exc)
@@ -312,6 +334,28 @@ def _send_once(subject: str, body: str, recipient: str, attachments: list[Path],
     return False, "auto"
 
 
+def _send_with_retries(subject: str, body: str, recipient: str, attachments: list[Path], html: str | None, retries: int) -> tuple[str, bool, str, str]:
+    sent = False
+    provider_used = os.environ.get("EMAIL_PROVIDER", "auto").strip().lower() or "auto"
+    message_id = ""
+    for _ in range(max(1, retries + 1)):
+        sent, provider_used = _send_once(subject, body, recipient, attachments, html)
+        if sent:
+            message_id = _pop_last_message_id()
+            break
+    return recipient, sent, provider_used, message_id
+
+
+def _email_worker_count(recipient_count: int) -> int:
+    raw = os.environ.get("QUANTCHECK_EMAIL_WORKERS", "6").strip()
+    try:
+        configured = int(raw)
+    except ValueError:
+        configured = 6
+    configured = max(1, configured)
+    return min(configured, max(1, recipient_count))
+
+
 def send_email_per_recipient(
     subject: str,
     body: str,
@@ -320,24 +364,44 @@ def send_email_per_recipient(
     html: str | None = None,
     retries: int = 1,
 ) -> tuple[List[str], List[str]]:
-    """Send one private message per recipient, retrying failures so a single bad
-    address never silently drops a subscriber. Returns (delivered, failed)."""
+    """Send one private message per recipient and confirm every recipient.
+
+    Returns ordered (delivered, failed) lists after every recipient has a ledger
+    record. Delivery uses bounded parallelism to keep large subscriber lists from
+    being cut short by scheduler windows while still preserving one private
+    provider call per recipient.
+    """
     recipients = parse_recipients(to) if to is None else parse_recipients(to, file_path="")
     attachments = list(attachments or [])
+    if not recipients:
+        return [], []
+
+    results: dict[str, tuple[bool, str, str]] = {}
+    workers = _email_worker_count(len(recipients))
+    if workers == 1:
+        for recipient in recipients:
+            _, sent, provider_used, message_id = _send_with_retries(subject, body, recipient, attachments, html, retries)
+            results[recipient] = (sent, provider_used, message_id)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(_send_with_retries, subject, body, recipient, attachments, html, retries)
+                for recipient in recipients
+            ]
+            for future in as_completed(futures):
+                recipient, sent, provider_used, message_id = future.result()
+                results[recipient] = (sent, provider_used, message_id)
+
     delivered: list[str] = []
     failed: list[str] = []
     for recipient in recipients:
-        sent = False
-        provider_used = os.environ.get("EMAIL_PROVIDER", "auto").strip().lower() or "auto"
-        for _ in range(max(1, retries + 1)):
-            sent, provider_used = _send_once(subject, body, recipient, attachments, html)
-            if sent:
-                break
-        message_id = os.environ.pop("QUANTCHECK_LAST_EMAIL_MESSAGE_ID", "") if sent else ""
+        sent, provider_used, message_id = results.get(recipient, (False, os.environ.get("EMAIL_PROVIDER", "auto").strip().lower() or "auto", ""))
         _ledger_record(provider_used, subject, recipient, sent, message_id=message_id or None)
         (delivered if sent else failed).append(recipient)
     if failed:
         _log_line(f"per-recipient delivery FAILED for {len(failed)} recipient(s): {', '.join(failed)}: {subject}")
+    if len(delivered) + len(failed) != len(recipients):
+        raise RuntimeError(f"email confirmation mismatch: expected {len(recipients)}, got {len(delivered) + len(failed)} for {subject}")
     return delivered, failed
 
 
