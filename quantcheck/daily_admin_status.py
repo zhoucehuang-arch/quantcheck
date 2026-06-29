@@ -10,6 +10,7 @@ from quantcheck.config import load_env
 from quantcheck.email_templates import build_card_email_html
 from quantcheck.gmail_api_notify import refresh_gmail_credentials, send_email as deliver_email
 from quantcheck.notify_routes import EmailRoute, recipients_for_route
+from quantcheck.official_mail_forwarder import connect_imap
 
 ROOT = Path(os.environ.get("QUANTCHECK_HOME", Path(__file__).resolve().parents[1]))
 STATE = ROOT / "state"
@@ -54,12 +55,44 @@ def gmail_token_status(env: dict[str, str]) -> tuple[str, str]:
         return "error", f"{type(exc).__name__}: {exc}"
 
 
+def imap_status(env: dict[str, str]) -> tuple[str, str]:
+    missing = [
+        key
+        for key in ["OFFICIAL_MAIL_IMAP_HOST", "OFFICIAL_MAIL_IMAP_USERNAME", "OFFICIAL_MAIL_IMAP_PASSWORD"]
+        if not env.get(key)
+    ]
+    if missing:
+        return "missing", ", ".join(missing)
+    try:
+        client = connect_imap(env)
+        try:
+            client.logout()
+        except Exception:
+            pass
+        return "valid", f"{env.get('OFFICIAL_MAIL_IMAP_USERNAME')} @ {env.get('OFFICIAL_MAIL_IMAP_HOST')}"
+    except Exception as exc:
+        return "error", f"{type(exc).__name__}: {exc}"
+
+
+def official_mail_reader_status(env: dict[str, str]) -> tuple[str, str, str]:
+    provider = (env.get("OFFICIAL_MAIL_PROVIDER") or "gmail").strip().lower()
+    if env.get("OFFICIAL_MAIL_ENABLED", "0") != "1":
+        return "Official Mail Reader", "disabled", "OFFICIAL_MAIL_ENABLED is not 1"
+    if provider == "imap":
+        state, detail = imap_status(env)
+        return "Official Mail IMAP", state, detail
+    if provider == "gmail":
+        state, detail = gmail_token_status(env)
+        return "Official Mail Gmail API", state, detail
+    return "Official Mail Reader", "error", f"unsupported provider={provider}"
+
+
 def build_status(env: dict[str, str]) -> tuple[str, str, str]:
     now_utc = datetime.now(timezone.utc)
     now_ny = now_utc.astimezone(NY)
     health = load_json(STATE / "health.json")
     official = load_json(STATE / "official_mail_forwarder_state.json")
-    token_state, token_detail = gmail_token_status(env)
+    reader_label, reader_state, reader_detail = official_mail_reader_status(env)
     recipients = recipients_for_route(EmailRoute.ADMIN, env)
 
     cards = [
@@ -67,9 +100,9 @@ def build_status(env: dict[str, str]) -> tuple[str, str, str]:
         {"label": "UTC Time", "value": now_utc.isoformat()},
         {"label": "Admin Recipients", "value": len(recipients)},
         {
-            "label": "Gmail API Token",
-            "value": f"{token_state}: {token_detail}",
-            "tone": "error" if token_state != "valid" else "neutral",
+            "label": reader_label,
+            "value": f"{reader_state}: {reader_detail}",
+            "tone": "error" if reader_state != "valid" else "neutral",
         },
         {
             "label": "Last Monitor Run",
