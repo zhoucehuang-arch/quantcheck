@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from datetime import date
 from functools import lru_cache
 
@@ -28,6 +29,9 @@ NON_TRADING_DAY_SCHEDULE = [
 ]
 
 VALID_KINDS = {"picks", "health_site", "health", "official_mail", "daily_admin_status"}
+MONTH_END_OFFICIAL_MAIL_INTERVAL_MINUTES = 15
+MONTH_END_OFFICIAL_MAIL_START = (8, 0)
+MONTH_END_OFFICIAL_MAIL_END = (20, 0)
 
 
 @lru_cache(maxsize=8)
@@ -42,7 +46,44 @@ def is_trading_day(day: date) -> bool:
 
 
 def schedule_for_date(day: date):
-    return TRADING_DAY_SCHEDULE if is_trading_day(day) else NON_TRADING_DAY_SCHEDULE
+    schedule = TRADING_DAY_SCHEDULE if is_trading_day(day) else NON_TRADING_DAY_SCHEDULE
+    if is_month_end_official_mail_day(day):
+        return merge_schedules(schedule, month_end_official_mail_schedule())
+    return schedule
+
+
+def is_month_end_official_mail_day(day: date) -> bool:
+    last_day = calendar.monthrange(day.year, day.month)[1]
+    return day.day >= last_day - 1
+
+
+def month_end_official_mail_schedule(
+    interval_minutes: int = MONTH_END_OFFICIAL_MAIL_INTERVAL_MINUTES,
+    start: tuple[int, int] = MONTH_END_OFFICIAL_MAIL_START,
+    end: tuple[int, int] = MONTH_END_OFFICIAL_MAIL_END,
+):
+    if interval_minutes <= 0:
+        raise ValueError("interval_minutes must be positive")
+    start_minutes = start[0] * 60 + start[1]
+    end_minutes = end[0] * 60 + end[1]
+    if not 0 <= start_minutes <= end_minutes <= 23 * 60 + 59:
+        raise ValueError("invalid month-end official-mail window")
+
+    out = []
+    minute_of_day = start_minutes
+    while minute_of_day <= end_minutes:
+        out.append((minute_of_day // 60, minute_of_day % 60, "official_mail"))
+        minute_of_day += interval_minutes
+    return out
+
+
+def merge_schedules(*schedules):
+    merged = {}
+    for schedule in schedules:
+        for hour, minute, kind in schedule:
+            key = (hour, minute, kind)
+            merged[key] = (hour, minute, kind)
+    return sorted(merged.values(), key=lambda item: (item[0], item[1], item[2]))
 
 
 def parse_schedule(raw: str | None, current_date: date | None = None):

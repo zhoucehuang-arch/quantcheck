@@ -5,8 +5,11 @@ from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
 from quantcheck.schedule import (
+    MONTH_END_OFFICIAL_MAIL_INTERVAL_MINUTES,
     NON_TRADING_DAY_SCHEDULE,
     TRADING_DAY_SCHEDULE,
+    is_month_end_official_mail_day,
+    month_end_official_mail_schedule,
     parse_schedule,
     schedule_for_date,
 )
@@ -18,7 +21,7 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(parse_schedule("", current_date=date(2026, 5, 26)), TRADING_DAY_SCHEDULE)
 
     def test_empty_schedule_uses_non_trading_day_default(self):
-        self.assertEqual(parse_schedule("", current_date=date(2026, 5, 30)), NON_TRADING_DAY_SCHEDULE)
+        self.assertEqual(parse_schedule("", current_date=date(2026, 5, 23)), NON_TRADING_DAY_SCHEDULE)
 
     def test_trading_day_schedule_matches_operational_scan_plan(self):
         self.assertEqual(
@@ -57,6 +60,34 @@ class ScheduleTests(unittest.TestCase):
     def test_schedule_for_date_treats_market_holiday_as_non_trading_day(self):
         # Memorial Day 2026: NYSE closed.
         self.assertEqual(schedule_for_date(date(2026, 5, 25)), NON_TRADING_DAY_SCHEDULE)
+
+    def test_month_end_official_mail_days_are_last_two_calendar_days(self):
+        self.assertFalse(is_month_end_official_mail_day(date(2026, 6, 28)))
+        self.assertTrue(is_month_end_official_mail_day(date(2026, 6, 29)))
+        self.assertTrue(is_month_end_official_mail_day(date(2026, 6, 30)))
+        self.assertTrue(is_month_end_official_mail_day(date(2026, 2, 27)))
+        self.assertTrue(is_month_end_official_mail_day(date(2026, 2, 28)))
+
+    def test_month_end_official_mail_schedule_is_uniform(self):
+        official = month_end_official_mail_schedule()
+        self.assertEqual(official[0], (8, 0, "official_mail"))
+        self.assertEqual(official[-1], (20, 0, "official_mail"))
+        minute_offsets = [hour * 60 + minute for hour, minute, _ in official]
+        deltas = [b - a for a, b in zip(minute_offsets, minute_offsets[1:])]
+        self.assertEqual(set(deltas), {MONTH_END_OFFICIAL_MAIL_INTERVAL_MINUTES})
+
+    def test_month_end_schedule_keeps_core_jobs_and_adds_uniform_official_mail(self):
+        schedule = schedule_for_date(date(2026, 6, 30))
+        self.assertIn((17, 0, "picks"), schedule)
+        self.assertIn((17, 15, "health_site"), schedule)
+        self.assertIn((12, 40, "daily_admin_status"), schedule)
+        self.assertIn((8, 0, "official_mail"), schedule)
+        self.assertIn((20, 0, "official_mail"), schedule)
+        self.assertEqual(len(schedule), len(set(schedule)))
+
+    def test_custom_schedule_does_not_get_month_end_expansion(self):
+        custom = "12:00:official_mail"
+        self.assertEqual(parse_schedule(custom, current_date=date(2026, 6, 30)), [(12, 0, "official_mail")])
 
     def test_current_window_has_no_open_0940_window_and_has_daily_non_trading(self):
         ny = ZoneInfo("America/New_York")

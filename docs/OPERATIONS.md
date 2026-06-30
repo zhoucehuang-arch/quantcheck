@@ -162,23 +162,27 @@ tail -f /opt/quantcheck/logs/quantcheck_email.log
 
 Default schedule, all in `America/New_York`:
 
+- `08:20` official mail scan
 - `08:30` picks scan
 - `08:45` health + site scan
 - `09:00` picks scan
 - `09:20` official mail scan
 - `09:40` picks scan
 - `12:00` official mail scan
+- `12:40` daily admin status
 - `17:00` picks scan
 - `17:15` health + site scan
 - `17:30` official mail scan
 
-Override with:
+When `QUANTCHECK_SCHEDULE` is empty, the daemon automatically expands official-mail checks on the last two calendar days of each month. During that month-end window it checks official mail every 15 minutes from `08:00` through `20:00`, while preserving the normal picks, health, and admin-status jobs.
+
+Override only for emergencies with:
 
 ```env
-QUANTCHECK_SCHEDULE=08:20:official_mail,08:30:picks,08:45:health_site,09:00:picks,09:20:official_mail,09:40:picks,12:00:official_mail,17:00:picks,17:15:health_site,17:30:official_mail
+QUANTCHECK_SCHEDULE=08:20:official_mail,08:30:picks,08:45:health_site,09:00:picks,09:20:official_mail,09:40:picks,12:00:official_mail,12:40:daily_admin_status,17:00:picks,17:15:health_site,17:30:official_mail
 ```
 
-Allowed job kinds are `picks`, `health_site`, `health`, and `official_mail`.
+Allowed job kinds are `picks`, `health_site`, `health`, `official_mail`, and `daily_admin_status`.
 
 ## Runtime Files
 
