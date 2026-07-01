@@ -101,14 +101,49 @@ class ScheduleTests(unittest.TestCase):
 
         captured = {}
 
-        def fake_run_cmd(args, timeout):
+        def fake_run_cmd(args, timeout, **kwargs):
             captured["timeout"] = timeout
-            return 0
+            return (0, "") if kwargs.get("capture_output") else 0
 
         with patch.dict(os.environ, {}, clear=True), patch.object(scheduler, "run_cmd", side_effect=fake_run_cmd):
             self.assertEqual(scheduler.run_picks(), 0)
 
         self.assertIsNone(captured["timeout"])
+
+    def test_official_mail_forward_triggers_forced_picks_check(self):
+        import quantcheck.scheduler as scheduler
+
+        calls = []
+
+        def fake_run_cmd(args, timeout, **kwargs):
+            calls.append((args, timeout, kwargs))
+            if "quantcheck.official_mail_forwarder" in args:
+                return 0, '{"checked": 1, "matched": 1, "forwarded": 1, "failed": 0}'
+            return 0
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(scheduler, "run_cmd", side_effect=fake_run_cmd):
+            self.assertEqual(scheduler.run_official_mail(), 0)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("quantcheck.official_mail_forwarder", calls[0][0])
+        self.assertTrue(calls[0][2]["capture_output"])
+        self.assertIn("quantcheck.picks_check", calls[1][0])
+        self.assertIn("--force", calls[1][0])
+
+    def test_official_mail_without_new_forward_does_not_trigger_picks_check(self):
+        import quantcheck.scheduler as scheduler
+
+        calls = []
+
+        def fake_run_cmd(args, timeout, **kwargs):
+            calls.append((args, timeout, kwargs))
+            return 0, '{"checked": 1, "matched": 1, "forwarded": 0, "failed": 0}'
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(scheduler, "run_cmd", side_effect=fake_run_cmd):
+            self.assertEqual(scheduler.run_official_mail(), 0)
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn("quantcheck.official_mail_forwarder", calls[0][0])
 
 
 if __name__ == "__main__":

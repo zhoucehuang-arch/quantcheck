@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import json
 import os
 import random
 import signal
@@ -24,7 +25,8 @@ NY = ZoneInfo("America/New_York")
 
 def log(msg: str):
     ts = datetime.now(timezone.utc).isoformat()
-    LOG_FILE.open("a", encoding="utf-8").write(f"[{ts}] {msg}\n")
+    with LOG_FILE.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{ts}] {msg}\n")
 
 
 def load_env():
@@ -57,24 +59,31 @@ def seconds_until_next(raw_schedule: str | None = None):
     return max(1, int((target - now).total_seconds())), target, kind
 
 
-def run_cmd(args: list[str], timeout: int | None) -> int:
+def run_cmd(args: list[str], timeout: int | None, *, capture_output: bool = False) -> int | tuple[int, str]:
     env = os.environ.copy()
     env.setdefault("QUANTCHECK_HOME", str(ROOT))
     start = time.time()
     try:
         p = subprocess.run(args, cwd=str(ROOT), env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False)
-        if p.stdout:
-            log(p.stdout[-8000:])
+        output = p.stdout or ""
+        if output:
+            log(output[-8000:])
         log(f"command rc={p.returncode} elapsed={time.time()-start:.1f}s: {' '.join(args)}")
+        if capture_output:
+            return p.returncode, output
         return p.returncode
     except subprocess.TimeoutExpired as e:
         out = (e.stdout or "") if isinstance(e.stdout, str) else ""
         if out:
             log(out[-4000:])
         log(f"timeout after {timeout}s: {' '.join(args)}")
+        if capture_output:
+            return 124, out
         return 124
     except Exception as e:
         log(f"command failed: {' '.join(args)} error={e}")
+        if capture_output:
+            return 1, ""
         return 1
 
 
@@ -109,9 +118,31 @@ def run_health_site():
     return max(rc1, rc2 if rc2 != 124 else 0, rc3)
 
 
+def official_mail_forwarded_count(output: str) -> int:
+    start = output.rfind("{")
+    if start < 0:
+        return 0
+    try:
+        payload = json.loads(output[start:])
+    except json.JSONDecodeError:
+        return 0
+    try:
+        return int(payload.get("forwarded") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def run_official_mail():
     timeout = int(os.environ.get("QUANTCHECK_MAIL_TIMEOUT_SECONDS", "60"))
-    return run_cmd([sys.executable, "-m", "quantcheck.official_mail_forwarder"], timeout)
+    rc, output = run_cmd([sys.executable, "-m", "quantcheck.official_mail_forwarder"], timeout, capture_output=True)
+    if rc != 0:
+        return rc
+    forwarded = official_mail_forwarded_count(output)
+    if forwarded <= 0:
+        return rc
+    log(f"official mail forwarded={forwarded}; triggering forced picks check")
+    picks_rc = run_picks(force=True)
+    return picks_rc if picks_rc else rc
 
 
 def run_daily_admin_status():
